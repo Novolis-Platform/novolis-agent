@@ -100,6 +100,12 @@ public sealed class AgentCommand
     [IgnoreMember] public string? EditMode { get; set; }
     [IgnoreMember] public string? DisplayMode { get; set; }
     [IgnoreMember] public string? Indices { get; set; }
+    [IgnoreMember] public string? Vertices { get; set; }
+    [IgnoreMember] public string? Phrase { get; set; }
+    [IgnoreMember] public string? Key { get; set; }
+    [IgnoreMember] public string? Value { get; set; }
+    /// <summary>When set, used by groundphrase (default true if unset).</summary>
+    [IgnoreMember] public bool? Select { get; set; }
     [IgnoreMember] public bool? Additive { get; set; }
     [IgnoreMember] public Dictionary<string, object?>? Extra { get; set; }
 
