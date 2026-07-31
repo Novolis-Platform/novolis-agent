@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Novolis.Agent.Testing</PackageId>
+    <IsPackable>true</IsPackable>
+    <Description>Test doubles for Novolis.Agent: fake host, in-memory channel, document asserts.</Description>
+    <RootNamespace>Novolis.Agent.Testing</RootNamespace>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Novolis.Agent.Core\Novolis.Agent.Core.csproj" />
+  </ItemGroup>
+</Project>

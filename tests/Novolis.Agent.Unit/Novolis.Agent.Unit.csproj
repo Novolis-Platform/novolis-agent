@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Novolis.Agent.Unit</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Novolis.Agent.Core\Novolis.Agent.Core.csproj" />
+    <ProjectReference Include="..\..\src\Novolis.Agent.Surface\Novolis.Agent.Surface.csproj" />
+    <ProjectReference Include="..\..\src\Novolis.Agent.Testing\Novolis.Agent.Testing.csproj" />
+  </ItemGroup>
+</Project>

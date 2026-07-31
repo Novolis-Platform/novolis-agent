@@ -1,14 +1,24 @@
 # Getting started
 
-Repository scaffold from [novolis-template-dotnet](https://github.com/Novolis-Platform/novolis-template-dotnet).
+```bash
+dotnet add package Novolis.Agent.Surface
+```
 
-## Documentation defaults
+```csharp
+using Novolis.Agent.Core;
+using Novolis.Agent.Surface;
 
-New packable projects should:
+[AgentSurface("myapp", HttpPort = 18785)]
+[AgentAction("ping", Summary = "Ping")]
+public interface IMySurface : IAgentHost;
 
-1. Import `build/Novolis.Documentation.props` (or a repo-specific `build/*.Documentation.props` that imports [Novolis.Documentation.props](https://github.com/Novolis-Platform/novolis-governance/blob/main/build/Novolis.Documentation.props)).
-2. Add `README.md` next to each packable `.csproj` and set `PackageReadmeFile`.
-3. Document all public API with XML comments before removing transitional `CS1591` suppressions.
+var def = AgentSurfaceDefinition.From<IMySurface>();
+await using var surface = AgentSurface.AttachAll(host, def);
 
-See [documentation-policy.md](https://github.com/Novolis-Platform/novolis-governance/blob/main/docs/documentation-policy.md).
+// Document (OpenAPI-class):
+// GET http://127.0.0.1:18785/agent/document
+// GET http://127.0.0.1:18785/agent/openapi.json
+// WebSocket duplex: ws://127.0.0.1:18785/agent/ws
+```
 
+See [agent-surface.md](agent-surface.md) for the protocol.

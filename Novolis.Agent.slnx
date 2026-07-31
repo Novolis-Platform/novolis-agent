@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Novolis.Agent.Core/Novolis.Agent.Core.csproj" />
+    <Project Path="src/Novolis.Agent.Surface/Novolis.Agent.Surface.csproj" />
+    <Project Path="src/Novolis.Agent.Testing/Novolis.Agent.Testing.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Novolis.Agent.Unit/Novolis.Agent.Unit.csproj" />
+  </Folder>
+</Solution>

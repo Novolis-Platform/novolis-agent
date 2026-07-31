@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Novolis.Agent.Surface</PackageId>
+    <IsPackable>true</IsPackable>
+    <Description>Attributed agent surfaces: document generation (OpenAPI / MCP / JSON-RPC), announcement, and HTTP+WebSocket / TCP JSONL / JSON-RPC / local-IPC / stdio / MCP-stdio transports for IAgentHost.</Description>
+    <RootNamespace>Novolis.Agent.Surface</RootNamespace>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Novolis.Agent.Core\Novolis.Agent.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- MessagePack comes in transitively via the Novolis.Agent.Core project reference. -->
+    <PackageReference Include="Novolis.Transports.LocalIpc" />
+  </ItemGroup>
+</Project>

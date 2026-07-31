@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Novolis.Agent.Core</PackageId>
+    <IsPackable>true</IsPackable>
+    <Description>Agent Surface contracts: IAgentHost, duplex channel frames, shared DTOs, and agent.* method names.</Description>
+    <RootNamespace>Novolis.Agent.Core</RootNamespace>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="MessagePack" />
+  </ItemGroup>
+</Project>

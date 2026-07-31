@@ -1,1 +1,7 @@
-{"packages":{}}
+{
+  "packages": {
+    "Novolis.Agent.Core": { "path": "src/Novolis.Agent.Core" },
+    "Novolis.Agent.Surface": { "path": "src/Novolis.Agent.Surface" },
+    "Novolis.Agent.Testing": { "path": "src/Novolis.Agent.Testing" }
+  }
+}
