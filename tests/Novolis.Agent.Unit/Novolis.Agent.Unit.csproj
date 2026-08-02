@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="TUnit" />
+    <PackageReference Include="Novolis.Transports.LocalIpc" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Novolis.Agent.Core\Novolis.Agent.Core.csproj" />

@@ -92,7 +92,7 @@ public sealed class AgentSurfaceDefinitionTests
     {
         var def = AgentSurfaceDefinition.From<IUnitSurface>();
         var host = new FakeAgentHost { HelloResponse = def.BuildHello(appId: "unit-test") };
-        var port = 19885 + Random.Shared.Next(0, 200);
+        var port = AgentTestPorts.GetFreePort();
         await using var http = AgentHttpHost.Attach(host, def, port);
         using var client = new HttpClient { BaseAddress = new Uri(http.BaseUrl + "/") };
 
@@ -107,3 +107,5 @@ public sealed class AgentSurfaceDefinitionTests
         await Assert.That(helloBody).Contains("\"ok\":true");
     }
 }
+
+
