@@ -175,7 +175,7 @@ public sealed class AgentHttpHost : IAsyncDisposable, IAgentTransport
             object result;
             if (path == "/agent/document" && req.HttpMethod == "GET")
                 result = JsonSerializer.Deserialize<object>(_document.ToJson(), AgentJson.Options)!;
-            else if (path == "/agent/openapi" && req.HttpMethod == "GET")
+            else if ((path is "/agent/openapi" or "/agent/openapi.json") && req.HttpMethod == "GET")
                 result = JsonSerializer.Deserialize<object>(_document.ToOpenApiJson(), AgentJson.Options)!;
             else if (path == "/agent/mcp/tools" && req.HttpMethod == "GET")
                 result = _document.ToMcpTools();

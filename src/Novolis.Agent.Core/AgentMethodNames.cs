@@ -69,4 +69,6 @@ public static class AgentActionIds
     public const string SetClock = "setClock";
     public const string CancelStack = "cancelStack";
     public const string PrepareDepart = "prepareDepart";
+    /// <summary>Framebuffer / scene click — params <c>x</c>, <c>y</c> (pixels) or typed <see cref="AgentCommand.X"/>/<see cref="AgentCommand.Y"/>.</summary>
+    public const string Click = "click";
 }

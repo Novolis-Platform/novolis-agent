@@ -40,7 +40,7 @@ Each host writes a small marker file under the temp directory (`{MarkerPrefix}.h
 ## Discover the surface
 
 * `GET /agent/document` — full JSON document (capabilities, actions, command schema, OpenAPI, MCP tools, RPC methods).
-* `GET /agent/openapi` — OpenAPI 3.0 fragment for `/agent/*` routes.
+* `GET /agent/openapi` / `GET /agent/openapi.json` — OpenAPI 3.0 fragment for `/agent/*` routes.
 * `GET /agent/mcp/tools` — MCP tool descriptors (`{surfaceId}_hello`, `_snapshot`, `_actions`, `_command`, ...).
 * `GET /agent/rpc/methods` — JSON-RPC method descriptors.
 * `GET /agent/announce` — a lightweight `AgentAnnouncement` for presence/discovery.

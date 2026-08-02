@@ -34,6 +34,15 @@ public sealed class AgentHttpClientTests
         var announce = await client.AnnounceAsync();
         await Assert.That(announce.AppId).IsEqualTo("client-test");
 
+        var openApi = await client.OpenApiAsync();
+        await Assert.That(openApi.GetProperty("openapi").GetString()).IsEqualTo("3.0.3");
+
+        var mcpTools = await client.McpToolsAsync();
+        await Assert.That(mcpTools.ValueKind is System.Text.Json.JsonValueKind.Array or System.Text.Json.JsonValueKind.Object).IsTrue();
+
+        var rpcMethods = await client.RpcMethodsAsync();
+        await Assert.That(rpcMethods.ValueKind is System.Text.Json.JsonValueKind.Array or System.Text.Json.JsonValueKind.Object).IsTrue();
+
         await client.SubscribeAsync();
         await Assert.That(host.SubscribeCount).IsEqualTo(1);
 

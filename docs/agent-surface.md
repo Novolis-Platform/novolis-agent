@@ -21,7 +21,7 @@ Hosts also accept legacy `session.*` aliases during migration.
 | Path | Notes |
 |------|-------|
 | `GET /agent/document` | Full `AgentSurfaceDocument` |
-| `GET /agent/openapi.json` | OpenAPI 3 projection |
+| `GET /agent/openapi` / `GET /agent/openapi.json` | OpenAPI 3 projection |
 | `GET /agent/mcp/tools` | MCP tool descriptors |
 | `GET /agent/rpc/methods` | JSON-RPC method table |
 | `GET /agent/announce` | Live endpoints |

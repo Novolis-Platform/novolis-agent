@@ -60,6 +60,10 @@ public sealed class AgentHttpHostIntegrationTests
         openapi.EnsureSuccessStatusCode();
         await Assert.That(await openapi.Content.ReadAsStringAsync()).Contains("paths");
 
+        using var openapiJson = await client.GetAsync("agent/openapi.json");
+        openapiJson.EnsureSuccessStatusCode();
+        await Assert.That(await openapiJson.Content.ReadAsStringAsync()).Contains("paths");
+
         using var mcp = await client.GetAsync("agent/mcp/tools");
         mcp.EnsureSuccessStatusCode();
 

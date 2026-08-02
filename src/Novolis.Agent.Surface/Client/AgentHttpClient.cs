@@ -53,6 +53,15 @@ public sealed class AgentHttpClient : IAsyncDisposable
     public Task<AgentAnnouncement> AnnounceAsync(CancellationToken cancellationToken = default) =>
         GetResultAsync<AgentAnnouncement>("agent/announce", cancellationToken);
 
+    public Task<JsonElement> OpenApiAsync(CancellationToken cancellationToken = default) =>
+        GetResultAsync<JsonElement>("agent/openapi.json", cancellationToken);
+
+    public Task<JsonElement> McpToolsAsync(CancellationToken cancellationToken = default) =>
+        GetResultAsync<JsonElement>("agent/mcp/tools", cancellationToken);
+
+    public Task<JsonElement> RpcMethodsAsync(CancellationToken cancellationToken = default) =>
+        GetResultAsync<JsonElement>("agent/rpc/methods", cancellationToken);
+
     public Task<AgentCommandResult> ContinueAsync(CancellationToken cancellationToken = default) =>
         PostResultAsync<AgentCommandResult>("agent/continue", null, cancellationToken);
 
