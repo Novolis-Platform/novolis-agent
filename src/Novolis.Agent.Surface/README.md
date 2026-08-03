@@ -1,3 +1,11 @@
+<!-- novolis-pkg-brand:start -->
+<p align="center">
+  <a href="https://github.com/Novolis-Platform/novolis-agent">
+    <img src="https://raw.githubusercontent.com/Novolis-Platform/.github/main/brand/logo-icon.svg" width="72" alt="Novolis"/>
+  </a>
+</p>
+<!-- novolis-pkg-brand:end -->
+
 # Novolis.Agent.Surface
 
 Attributed **agent surfaces** on top of [`Novolis.Agent.Core`](../Novolis.Agent.Core/README.md): a single `[AgentSurface]`-decorated
@@ -54,3 +62,4 @@ Each host writes a small marker file under the temp directory (`{MarkerPrefix}.h
 
 `AgentMcpStdioTransport` speaks a minimal Model Context Protocol over stdio (`initialize`, `tools/list`,
 `tools/call`) so an app can be driven directly by an MCP-aware agent host process.
+

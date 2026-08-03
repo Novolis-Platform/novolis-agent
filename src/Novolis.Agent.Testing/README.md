@@ -1,3 +1,11 @@
+<!-- novolis-pkg-brand:start -->
+<p align="center">
+  <a href="https://github.com/Novolis-Platform/novolis-agent">
+    <img src="https://raw.githubusercontent.com/Novolis-Platform/.github/main/brand/logo-icon.svg" width="72" alt="Novolis"/>
+  </a>
+</p>
+<!-- novolis-pkg-brand:end -->
+
 # Novolis.Agent.Testing
 
 **Fake `IAgentHost`**, in-memory **`IAgentChannel`**, and helpers for Agent Surface unit/integration tests without binding HTTP or stdio transports.
@@ -66,3 +74,4 @@ Pair with `Novolis.Agent.Surface` transport tests by driving `IAgentChannel` dir
 ## Dogfooding
 
 Used by `novolis-agent` tests and any app that attaches Agent Surface but needs fast in-process host/channel coverage.
+

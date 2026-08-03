@@ -1,3 +1,11 @@
+<!-- novolis-pkg-brand:start -->
+<p align="center">
+  <a href="https://github.com/Novolis-Platform/novolis-agent">
+    <img src="https://raw.githubusercontent.com/Novolis-Platform/.github/main/brand/logo-icon.svg" width="72" alt="Novolis"/>
+  </a>
+</p>
+<!-- novolis-pkg-brand:end -->
+
 # Novolis.Agent.Core
 
 Contracts for **Agent Surface**: `IAgentHost`, duplex `IAgentChannel` / `AgentFrame`, shared DTOs, and `agent.*` wire method names.
@@ -50,3 +58,4 @@ Wire payloads use `AgentProtocolCodec` and method names from `AgentMethodNames` 
 |---------|------|
 | `Novolis.Agent.Surface` | Surface definition, OpenAPI/MCP, HTTP/stdio transports |
 | `Novolis.Agent.Testing` | `FakeAgentHost`, `InMemoryAgentChannel` for tests |
+
