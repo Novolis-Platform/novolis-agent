@@ -11,6 +11,7 @@ using Novolis.Transports.LocalIpc;
 
 namespace Novolis.Agent.Unit;
 
+[NotInParallel("agent-env")]
 public sealed class AgentCoverageGapTests
 {
     [Test]

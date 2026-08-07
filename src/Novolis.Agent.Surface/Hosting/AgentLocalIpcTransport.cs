@@ -11,6 +11,7 @@ public sealed class AgentLocalIpcTransport : IAsyncDisposable, IAgentTransport
     private readonly LocalIpcEndpoint _endpoint;
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _listenTask;
+    private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly object _subscribersGate = new();
     private readonly HashSet<ILocalIpcConnection> _subscribers = new();
     private long _eventSequence;
@@ -46,7 +47,8 @@ public sealed class AgentLocalIpcTransport : IAsyncDisposable, IAgentTransport
         return definition.IsIpcEnabledByEnvironment() ? Attach(host, definition, preferredAddress) : null;
     }
 
-    public ValueTask StartAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+    public async ValueTask StartAsync(CancellationToken cancellationToken = default) =>
+        await _ready.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
 
     public async ValueTask StopAsync(CancellationToken cancellationToken = default) =>
         await DisposeAsync().ConfigureAwait(false);
@@ -55,16 +57,13 @@ public sealed class AgentLocalIpcTransport : IAsyncDisposable, IAgentTransport
     {
         try
         {
-            await File.WriteAllTextAsync(
-                    _definition.IpcMarkerPath,
-                    $"{Environment.ProcessId}\n{_endpoint.Kind}\n{_endpoint.Address}\n",
-                    cancellationToken)
-                .ConfigureAwait(false);
-
+            await TryWriteMarkerAsync(cancellationToken).ConfigureAwait(false);
             _listener = LocalIpcTransport.CreateListener(_endpoint);
             while (!cancellationToken.IsCancellationRequested)
             {
-                var connection = await _listener.AcceptAsync(cancellationToken).ConfigureAwait(false);
+                var pendingConnection = _listener.AcceptAsync(cancellationToken);
+                _ready.TrySetResult();
+                var connection = await pendingConnection.ConfigureAwait(false);
                 _ = Task.Run(() => HandleConnectionAsync(connection, cancellationToken), cancellationToken);
             }
         }
@@ -74,6 +73,7 @@ public sealed class AgentLocalIpcTransport : IAsyncDisposable, IAgentTransport
         }
         catch (Exception ex)
         {
+            _ready.TrySetException(ex);
             try
             {
                 await File.WriteAllTextAsync(_definition.IpcMarkerPath + ".error", ex.ToString(), CancellationToken.None)
@@ -83,6 +83,26 @@ public sealed class AgentLocalIpcTransport : IAsyncDisposable, IAgentTransport
             {
                 // ignore
             }
+        }
+    }
+
+    private async Task TryWriteMarkerAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await File.WriteAllTextAsync(
+                    _definition.IpcMarkerPath,
+                    $"{Environment.ProcessId}\n{_endpoint.Kind}\n{_endpoint.Address}\n",
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            // Discovery markers are best-effort; a competing host must not prevent this endpoint from listening.
         }
     }
 
@@ -268,6 +288,7 @@ public sealed class AgentLocalIpcTransport : IAsyncDisposable, IAgentTransport
         _host.Decision -= OnDecision;
         _host.Changed -= OnChanged;
         _host.ActionResult -= OnActionResult;
+        _ready.TrySetCanceled();
         await _cts.CancelAsync().ConfigureAwait(false);
         if (_listener is not null)
             await _listener.DisposeAsync().ConfigureAwait(false);

@@ -8,6 +8,7 @@ using Novolis.Agent.Testing;
 
 namespace Novolis.Agent.Unit;
 
+[NotInParallel("agent-env")]
 public sealed class AgentJsonRpcHostTests
 {
     [Test]

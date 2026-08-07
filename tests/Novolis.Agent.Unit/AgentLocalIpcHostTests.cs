@@ -5,6 +5,7 @@ using Novolis.Transports.LocalIpc;
 
 namespace Novolis.Agent.Unit;
 
+[NotInParallel("agent-ipc")]
 public sealed class AgentLocalIpcHostTests
 {
     [Test]
@@ -19,6 +20,7 @@ public sealed class AgentLocalIpcHostTests
             };
             var pipeName = $"novolis-agent-test-{Guid.NewGuid():N}";
             await using var ipcHost = AgentLocalIpcTransport.Attach(host, def, pipeName);
+            await ipcHost.StartAsync();
 
             var endpoint = AgentEndpoints.CreateIpcEndpoint(def, pipeName);
             await Assert.That(endpoint.Kind).IsEqualTo(LocalIpcTransportKind.NamedPipe);
@@ -55,6 +57,7 @@ public sealed class AgentLocalIpcHostTests
             var host = new FakeAgentHost();
             var pipeName = $"novolis-agent-test-{Guid.NewGuid():N}";
             await using var ipcHost = AgentLocalIpcTransport.Attach(host, def, pipeName);
+            await ipcHost.StartAsync();
 
             var endpoint = AgentEndpoints.CreateIpcEndpoint(def, pipeName);
             await using var client = await AgentIpcTestHelper.ConnectAsync(endpoint);
@@ -72,6 +75,7 @@ public sealed class AgentLocalIpcHostTests
             var host = new FakeAgentHost { SnapshotResponse = new AgentSnapshot { Day = 2, HubId = "evt" } };
             var pipeName = $"novolis-agent-test-{Guid.NewGuid():N}";
             await using var ipcHost = AgentLocalIpcTransport.Attach(host, def, pipeName);
+            await ipcHost.StartAsync();
 
             var endpoint = AgentEndpoints.CreateIpcEndpoint(def, pipeName);
             await using var client = await AgentIpcTestHelper.ConnectAsync(endpoint);
@@ -98,6 +102,7 @@ public sealed class AgentLocalIpcHostTests
             var host = new FakeAgentHost { SnapshotResponse = new AgentSnapshot { Day = 3, HubId = "evt2" } };
             var pipeName = $"novolis-agent-test-{Guid.NewGuid():N}";
             await using var ipcHost = AgentLocalIpcTransport.Attach(host, def, pipeName);
+            await ipcHost.StartAsync();
 
             var endpoint = AgentEndpoints.CreateIpcEndpoint(def, pipeName);
             await using var client = await AgentIpcTestHelper.ConnectAsync(endpoint);

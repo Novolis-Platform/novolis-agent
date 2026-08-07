@@ -1,3 +1,4 @@
+using System.Net.Sockets;
 using Novolis.Agent.Surface;
 using Novolis.Transports.LocalIpc;
 
@@ -29,39 +30,65 @@ static class AgentIpcTestHelper
 
     public static async Task<AgentLocalIpcClient> ConnectAsync(LocalIpcEndpoint endpoint)
     {
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        for (var i = 0; i < 300; i++)
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        Exception? lastError = null;
+        while (!timeout.IsCancellationRequested)
         {
+            using var attempt = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
+            attempt.CancelAfter(TimeSpan.FromSeconds(1));
             try
             {
-                return await AgentLocalIpcClient.ConnectAsync(endpoint, cts.Token);
+                return await AgentLocalIpcClient.ConnectAsync(endpoint, attempt.Token);
             }
-            catch (Exception) when (i < 299)
+            catch (Exception ex) when (
+                !timeout.IsCancellationRequested
+                && ex is IOException or SocketException or OperationCanceledException)
             {
-                await Task.Delay(20, cts.Token);
+                lastError = ex;
             }
+
+            await DelayBeforeRetryAsync(timeout.Token);
         }
 
-        throw new TimeoutException($"IPC listener not ready: {endpoint.Address}");
+        throw new TimeoutException($"IPC listener not ready after 30 seconds: {endpoint.Address}", lastError);
     }
 
     public static async Task<ILocalIpcConnection> ConnectConnectionAsync(LocalIpcEndpoint endpoint)
     {
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var transport = LocalIpcTransport.CreateClient();
-        for (var i = 0; i < 300; i++)
+        Exception? lastError = null;
+        while (!timeout.IsCancellationRequested)
         {
+            using var attempt = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
+            attempt.CancelAfter(TimeSpan.FromSeconds(1));
             try
             {
-                return await transport.ConnectAsync(endpoint, cts.Token);
+                return await transport.ConnectAsync(endpoint, attempt.Token);
             }
-            catch (Exception) when (i < 299)
+            catch (Exception ex) when (
+                !timeout.IsCancellationRequested
+                && ex is IOException or SocketException or OperationCanceledException)
             {
-                await Task.Delay(20, cts.Token);
+                lastError = ex;
             }
+
+            await DelayBeforeRetryAsync(timeout.Token);
         }
 
-        throw new TimeoutException($"IPC listener not ready: {endpoint.Address}");
+        throw new TimeoutException($"IPC listener not ready after 30 seconds: {endpoint.Address}", lastError);
+    }
+
+    private static async Task DelayBeforeRetryAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(50, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // The caller reports a stable TimeoutException below.
+        }
     }
 }
 

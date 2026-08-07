@@ -13,6 +13,7 @@ public interface IMethodSurface : IAgentHost
     void CustomHello();
 }
 
+[NotInParallel("agent-env")]
 public sealed class AgentTransportCoverageTests
 {
     [Test]

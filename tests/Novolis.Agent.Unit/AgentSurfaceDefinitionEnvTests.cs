@@ -3,6 +3,7 @@ using Novolis.Agent.Surface;
 
 namespace Novolis.Agent.Unit;
 
+[NotInParallel("agent-env")]
 public sealed class AgentSurfaceDefinitionEnvTests
 {
     readonly List<(string key, string? value)> _saved = [];

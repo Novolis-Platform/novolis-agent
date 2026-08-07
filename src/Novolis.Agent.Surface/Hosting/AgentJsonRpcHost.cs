@@ -138,9 +138,11 @@ public sealed class AgentJsonRpcHost : IAsyncDisposable, IAgentTransport
     private async Task HandleRequestAsync(StreamWriter writer, string line, CancellationToken cancellationToken)
     {
         JsonElement? id = null;
+        var parsed = false;
         try
         {
             using var doc = JsonDocument.Parse(line);
+            parsed = true;
             var root = doc.RootElement;
             id = root.TryGetProperty("id", out var idEl) ? idEl.Clone() : null;
             var method = root.TryGetProperty("method", out var m) ? m.GetString() : null;
@@ -165,11 +167,12 @@ public sealed class AgentJsonRpcHost : IAsyncDisposable, IAgentTransport
         }
         catch (Exception ex)
         {
-            if (id is null)
+            if (parsed && id is null)
                 return;
 
             var error = new { code = -32603, message = ex.Message };
-            var reply = JsonSerializer.Serialize(new { jsonrpc = "2.0", error, id }, AgentJson.Options);
+            var replyId = id ?? JsonSerializer.SerializeToElement(0);
+            var reply = JsonSerializer.Serialize(new { jsonrpc = "2.0", error, id = replyId }, AgentJson.Options);
             try { await writer.WriteLineAsync(reply.AsMemory(), cancellationToken).ConfigureAwait(false); }
             catch { /* ignore */ }
         }

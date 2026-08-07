@@ -63,13 +63,22 @@ public sealed class AgentSurfaceAttachTests
         Environment.SetEnvironmentVariable(def.McpEnableEnv, "1");
         Environment.SetEnvironmentVariable(def.StdioEnableEnv, "1");
 
-        // MCP/stdio attach uses Console.In by default; verify lifecycle with in-memory streams instead.
-        await using var mcp = new AgentMcpStdioTransport(host, def, new StringReader(""), new StringWriter());
-        await mcp.StartAsync();
-        await using var stdio = new AgentStdioHost(host, new StringReader(""), new StringWriter());
-        await stdio.StartAsync();
-        await Assert.That(mcp.Kind).IsEqualTo("mcp-stdio");
-        await Assert.That(stdio.Kind).IsEqualTo("stdio-jsonl");
+        try
+        {
+            // MCP/stdio attach uses Console.In by default; verify lifecycle with in-memory streams instead.
+            await using var mcp = new AgentMcpStdioTransport(host, def, new StringReader(""), new StringWriter());
+            await mcp.StartAsync();
+            await using var stdio = new AgentStdioHost(host, new StringReader(""), new StringWriter());
+            await stdio.StartAsync();
+            await Assert.That(mcp.Kind).IsEqualTo("mcp-stdio");
+            await Assert.That(stdio.Kind).IsEqualTo("stdio-jsonl");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(def.EnableEnv, null);
+            Environment.SetEnvironmentVariable(def.McpEnableEnv, null);
+            Environment.SetEnvironmentVariable(def.StdioEnableEnv, null);
+        }
     }
 
     [Test]
@@ -161,12 +170,20 @@ public sealed class AgentSurfaceAttachTests
         Environment.SetEnvironmentVariable(def.TcpEnableEnv, "1");
         Environment.SetEnvironmentVariable(def.TcpPortEnv, AgentTestPorts.GetFreePort().ToString());
 
-        var tcp = AgentTcpJsonlHost.TryAttachFromEnvironment(host, def);
-        await Assert.That(tcp).IsNotNull();
-        await tcp!.DisposeAsync();
+        try
+        {
+            var tcp = AgentTcpJsonlHost.TryAttachFromEnvironment(host, def);
+            await Assert.That(tcp).IsNotNull();
+            await tcp!.DisposeAsync();
 
-        Environment.SetEnvironmentVariable(def.TcpEnableEnv, "0");
-        await Assert.That(AgentTcpJsonlHost.TryAttachFromEnvironment(host, def)).IsNull();
+            Environment.SetEnvironmentVariable(def.TcpEnableEnv, "0");
+            await Assert.That(AgentTcpJsonlHost.TryAttachFromEnvironment(host, def)).IsNull();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(def.TcpEnableEnv, null);
+            Environment.SetEnvironmentVariable(def.TcpPortEnv, null);
+        }
     }
 }
 
