@@ -6,7 +6,7 @@ using Novolis.Agent.Core;
 
 namespace Novolis.Agent.Surface;
 
-/// <summary>TCP JSON-RPC 2.0 host (<c>jsonrpc</c> / <c>method</c> / <c>params</c> / <c>id</c>); pushes events as notifications.</summary>
+/// <summary>TCP JSON-RPC 2.0 host (<c>jsonrpc</c> / <c>method</c> / <c>params</c> / <c>id</c>); pushes events as notifications. Used by session hosts and IPC attach.</summary>
 public sealed class AgentJsonRpcHost : IAsyncDisposable, IAgentTransport
 {
     private readonly IAgentHost _host;
