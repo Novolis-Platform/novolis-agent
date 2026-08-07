@@ -10,10 +10,11 @@ static class AgentIpcTestHelper
 
     public static async Task<T> RunAsync<T>(Func<Task<T>> action)
     {
-        await Gate.WaitAsync();
+        if (!await Gate.WaitAsync(TimeSpan.FromSeconds(60)).ConfigureAwait(false))
+            throw new TimeoutException("Timed out waiting for the agent IPC test gate.");
         try
         {
-            return await action();
+            return await action().ConfigureAwait(false);
         }
         finally
         {

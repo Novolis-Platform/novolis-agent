@@ -59,11 +59,10 @@ public sealed class AgentLocalIpcTransport : IAsyncDisposable, IAgentTransport
         {
             await TryWriteMarkerAsync(cancellationToken).ConfigureAwait(false);
             _listener = LocalIpcTransport.CreateListener(_endpoint);
+            _ready.TrySetResult();
             while (!cancellationToken.IsCancellationRequested)
             {
-                var pendingConnection = _listener.AcceptAsync(cancellationToken);
-                _ready.TrySetResult();
-                var connection = await pendingConnection.ConfigureAwait(false);
+                var connection = await _listener.AcceptAsync(cancellationToken).ConfigureAwait(false);
                 _ = Task.Run(() => HandleConnectionAsync(connection, cancellationToken), cancellationToken);
             }
         }
@@ -294,11 +293,12 @@ public sealed class AgentLocalIpcTransport : IAsyncDisposable, IAgentTransport
             await _listener.DisposeAsync().ConfigureAwait(false);
         try
         {
-            await _listenTask.ConfigureAwait(false);
+            // Unix AcceptAsync can ignore cancel until the socket is disposed; bound the join.
+            await _listenTask.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
         }
         catch
         {
-            // ignore
+            // ignore cancel/timeout/fault from listen loop
         }
 
         _cts.Dispose();
