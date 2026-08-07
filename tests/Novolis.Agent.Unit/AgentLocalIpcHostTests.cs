@@ -23,7 +23,10 @@ public sealed class AgentLocalIpcHostTests
             await ipcHost.StartAsync();
 
             var endpoint = AgentEndpoints.CreateIpcEndpoint(def, pipeName);
-            await Assert.That(endpoint.Kind).IsEqualTo(LocalIpcTransportKind.NamedPipe);
+            var expectedKind = OperatingSystem.IsWindows()
+                ? LocalIpcTransportKind.NamedPipe
+                : LocalIpcTransportKind.UnixDomainSocket;
+            await Assert.That(endpoint.Kind).IsEqualTo(expectedKind);
 
             await using var client = await AgentIpcTestHelper.ConnectAsync(endpoint);
             var hello = await client.HelloAsync();
