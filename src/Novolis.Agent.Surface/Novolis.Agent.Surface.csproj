@@ -12,6 +12,6 @@
   </ItemGroup>
   <ItemGroup>
     <!-- MessagePack comes in transitively via the Novolis.Agent.Core project reference. -->
-    <PackageReference Include="Novolis.Transports.LocalIpc" />
+    <LibraryReference Include="Novolis.Transports.LocalIpc" />
   </ItemGroup>
 </Project>
