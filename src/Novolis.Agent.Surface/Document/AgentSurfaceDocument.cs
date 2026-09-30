@@ -3,12 +3,6 @@ using Novolis.Agent.Core;
 
 namespace Novolis.Agent.Surface;
 
-/// <summary>MCP tool descriptor: name, human summary, and JSON Schema input shape.</summary>
-public sealed record McpToolDescriptor(string Name, string Description, Dictionary<string, object?> InputSchema);
-
-/// <summary>JSON-RPC 2.0 method descriptor exposed by an agent surface.</summary>
-public sealed record AgentRpcMethodDescriptor(string Method, string Summary, Dictionary<string, object?>? ParamsSchema);
-
 /// <summary>
 /// Builds discovery artifacts (document JSON, OpenAPI fragment, MCP tool list, JSON-RPC method list) for an
 /// <see cref="AgentSurfaceDefinition"/>, given the ports the surface is actually bound to.
