@@ -25,7 +25,7 @@ public sealed class AgentTcpJsonlHostTests
         await using var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
 
         await writer.WriteLineAsync("""{"method":"hello","id":3}""");
-        var line = await reader.ReadLineAsync();
+        var line = await reader.ReadLineAsync(TimeSpan.FromSeconds(8));
         using var doc = JsonDocument.Parse(line!);
         await Assert.That(doc.RootElement.GetProperty("ok").GetBoolean()).IsTrue();
         await Assert.That(doc.RootElement.GetProperty("id").GetInt64()).IsEqualTo(3);
@@ -51,7 +51,7 @@ public sealed class AgentTcpJsonlHostTests
         await writer.WriteLineAsync("# comment");
         await writer.WriteLineAsync("");
         await writer.WriteLineAsync("""{"method":"continue","id":1}""");
-        var line = await reader.ReadLineAsync();
+        var line = await reader.ReadLineAsync(TimeSpan.FromSeconds(8));
         using var doc = JsonDocument.Parse(line!);
         await Assert.That(doc.RootElement.GetProperty("ok").GetBoolean()).IsTrue();
         await Assert.That(host.ContinueCount).IsEqualTo(1);
@@ -72,7 +72,7 @@ public sealed class AgentTcpJsonlHostTests
         await using var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
 
         await writer.WriteLineAsync("""{"method":"bad.method","id":9}""");
-        var line = await reader.ReadLineAsync();
+        var line = await reader.ReadLineAsync(TimeSpan.FromSeconds(8));
         using var doc = JsonDocument.Parse(line!);
         await Assert.That(doc.RootElement.GetProperty("ok").GetBoolean()).IsFalse();
         await Assert.That(doc.RootElement.GetProperty("error").GetString()).Contains("Unknown method");
@@ -93,11 +93,11 @@ public sealed class AgentTcpJsonlHostTests
         await using var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
 
         await writer.WriteLineAsync("""{"method":"subscribe","id":1}""");
-        var ack = await reader.ReadLineAsync();
+        var ack = await reader.ReadLineAsync(TimeSpan.FromSeconds(8));
         using (JsonDocument.Parse(ack!)) { }
 
         host.RaiseChanged("tcp-event");
-        var evtLine = await reader.ReadLineAsync();
+        var evtLine = await reader.ReadLineAsync(TimeSpan.FromSeconds(8));
         using var evtDoc = JsonDocument.Parse(evtLine!);
         await Assert.That(evtDoc.RootElement.GetProperty("eventName").GetString()).IsEqualTo(AgentMethodNames.Changed);
     }
@@ -117,10 +117,10 @@ public sealed class AgentTcpJsonlHostTests
         await using var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
 
         await writer.WriteLineAsync("""{"method":"subscribe","id":1}""");
-        await reader.ReadLineAsync();
+        await reader.ReadLineAsync(TimeSpan.FromSeconds(8));
 
         host.RaiseDecision("tcp-decide");
-        var evtLine = await reader.ReadLineAsync();
+        var evtLine = await reader.ReadLineAsync(TimeSpan.FromSeconds(8));
         using var evtDoc = JsonDocument.Parse(evtLine!);
         await Assert.That(evtDoc.RootElement.GetProperty("eventName").GetString()).IsEqualTo(AgentMethodNames.Decision);
     }

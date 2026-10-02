@@ -26,14 +26,14 @@ public sealed class AgentJsonRpcHostTests
         await using var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
 
         await writer.WriteLineAsync("""{"jsonrpc":"2.0","method":"hello","id":1}""");
-        var helloLine = await reader.ReadLineAsync();
+        var helloLine = await reader.ReadLineAsync(TimeSpan.FromSeconds(8));
         using (var helloDoc = JsonDocument.Parse(helloLine!))
         {
             await Assert.That(helloDoc.RootElement.GetProperty("result").GetProperty("appId").GetString()).IsEqualTo("rpc-test");
         }
 
         await writer.WriteLineAsync("""{"jsonrpc":"2.0","method":"command","id":2,"params":{"actionId":"ping","params":{"label":"rpc"}}}""");
-        var cmdLine = await reader.ReadLineAsync();
+        var cmdLine = await reader.ReadLineAsync(TimeSpan.FromSeconds(8));
         using (var cmdDoc = JsonDocument.Parse(cmdLine!))
         {
             await Assert.That(cmdDoc.RootElement.GetProperty("result").GetProperty("ok").GetBoolean()).IsTrue();
@@ -57,11 +57,11 @@ public sealed class AgentJsonRpcHostTests
         await using var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
 
         await writer.WriteLineAsync("""{"jsonrpc":"2.0","method":"subscribe","id":1}""");
-        var ack = await reader.ReadLineAsync();
+        var ack = await reader.ReadLineAsync(TimeSpan.FromSeconds(8));
         using (JsonDocument.Parse(ack!)) { }
 
         host.RaiseDecision("pick-a");
-        var note = await reader.ReadLineAsync();
+        var note = await reader.ReadLineAsync(TimeSpan.FromSeconds(8));
         using var noteDoc = JsonDocument.Parse(note!);
         await Assert.That(noteDoc.RootElement.GetProperty("method").GetString()).IsEqualTo(AgentMethodNames.Decision);
     }
@@ -81,7 +81,7 @@ public sealed class AgentJsonRpcHostTests
         await using var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
 
         await writer.WriteLineAsync("""{"jsonrpc":"2.0","method":"nope","id":9}""");
-        var line = await reader.ReadLineAsync();
+        var line = await reader.ReadLineAsync(TimeSpan.FromSeconds(8));
         using var doc = JsonDocument.Parse(line!);
         await Assert.That(doc.RootElement.TryGetProperty("error", out _)).IsTrue();
     }
@@ -102,7 +102,7 @@ public sealed class AgentJsonRpcHostTests
 
         await writer.WriteLineAsync("""{"jsonrpc":"2.0","method":"subscribe"}""");
         host.RaiseChanged("no-id");
-        var note = await reader.ReadLineAsync();
+        var note = await reader.ReadLineAsync(TimeSpan.FromSeconds(8));
         using var noteDoc = JsonDocument.Parse(note!);
         await Assert.That(noteDoc.RootElement.GetProperty("method").GetString()).IsEqualTo(AgentMethodNames.Changed);
     }

@@ -194,7 +194,7 @@ public sealed class AgentTcpJsonlHost : IAsyncDisposable, IAgentTransport
         _host.ActionResult -= _onActionResult;
         await _cts.CancelAsync().ConfigureAwait(false);
         try { _listener.Stop(); } catch { /* ignore */ }
-        try { await _loop.ConfigureAwait(false); } catch { /* ignore */ }
+        try { await _loop.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false); } catch { /* ignore */ }
         _cts.Dispose();
         try { File.Delete(_definition.TcpMarkerPath); } catch { /* ignore */ }
     }

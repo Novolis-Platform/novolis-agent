@@ -132,7 +132,7 @@ public sealed class AgentTransportShutdownFaultTests
         await using var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
 
         await writer.WriteLineAsync("{not-json");
-        var line = await reader.ReadLineAsync();
+        var line = await reader.ReadLineAsync(TimeSpan.FromSeconds(8));
         using var doc = JsonDocument.Parse(line!);
         await Assert.That(doc.RootElement.TryGetProperty("error", out _)).IsTrue();
         await Assert.That(doc.RootElement.GetProperty("id").GetInt32()).IsEqualTo(0);
@@ -157,10 +157,10 @@ public sealed class AgentTransportShutdownFaultTests
         await using var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
 
         await writer.WriteLineAsync("""{"jsonrpc":"2.0","method":"subscribe","id":1}""");
-        await reader.ReadLineAsync();
+        await reader.ReadLineAsync(TimeSpan.FromSeconds(8));
 
         host.RaiseActionResult("rpc-action", ok: true);
-        var note = await reader.ReadLineAsync();
+        var note = await reader.ReadLineAsync(TimeSpan.FromSeconds(8));
         using var noteDoc = JsonDocument.Parse(note!);
         await Assert.That(noteDoc.RootElement.GetProperty("method").GetString()).IsEqualTo(AgentMethodNames.ActionResult);
     }
@@ -194,7 +194,7 @@ public sealed class AgentTransportShutdownFaultTests
         await using var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
 
         await writer.WriteLineAsync("{bad-json");
-        var line = await reader.ReadLineAsync();
+        var line = await reader.ReadLineAsync(TimeSpan.FromSeconds(8));
         using var doc = JsonDocument.Parse(line!);
         await Assert.That(doc.RootElement.GetProperty("ok").GetBoolean()).IsFalse();
     }
@@ -218,10 +218,10 @@ public sealed class AgentTransportShutdownFaultTests
         await using var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
 
         await writer.WriteLineAsync("""{"method":"subscribe","id":1}""");
-        await reader.ReadLineAsync();
+        await reader.ReadLineAsync(TimeSpan.FromSeconds(8));
 
         host.RaiseActionResult("tcp-action", ok: false);
-        var evtLine = await reader.ReadLineAsync();
+        var evtLine = await reader.ReadLineAsync(TimeSpan.FromSeconds(8));
         using var evtDoc = JsonDocument.Parse(evtLine!);
         await Assert.That(evtDoc.RootElement.GetProperty("eventName").GetString()).IsEqualTo(AgentMethodNames.ActionResult);
     }

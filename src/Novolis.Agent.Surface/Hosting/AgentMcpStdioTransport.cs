@@ -51,8 +51,9 @@ public sealed class AgentMcpStdioTransport : IAsyncDisposable, IAgentTransport
         await _cts.CancelAsync().ConfigureAwait(false);
         if (_loop is not null)
         {
-            try { await _loop.ConfigureAwait(false); }
-            catch (OperationCanceledException) { /* ignore */ }
+            // Console.In.ReadLineAsync can ignore cancellation until a line arrives.
+            try { await _loop.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
+            catch { /* ignore cancel/timeout from a blocked read */ }
         }
 
         try { File.Delete(_definition.McpMarkerPath); } catch { /* ignore */ }

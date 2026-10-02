@@ -551,7 +551,7 @@ public sealed class AgentHttpHost : IAsyncDisposable, IAgentTransport
             _wsClients.Clear();
         }
 
-        try { await _loop.ConfigureAwait(false); } catch { /* ignore */ }
+        try { await _loop.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false); } catch { /* ignore */ }
         _cts.Dispose();
         try { File.Delete(_definition.HttpMarkerPath); } catch { /* ignore */ }
         try { File.Delete(_definition.WsMarkerPath); } catch { /* ignore */ }

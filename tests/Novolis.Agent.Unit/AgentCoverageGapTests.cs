@@ -216,7 +216,7 @@ public sealed class AgentCoverageGapTests
 
         await writer.WriteLineAsync("");
         await writer.WriteLineAsync("{bad");
-        var line = await reader.ReadLineAsync();
+        var line = await reader.ReadLineAsync(TimeSpan.FromSeconds(8));
         using var doc = JsonDocument.Parse(line!);
         await Assert.That(doc.RootElement.TryGetProperty("error", out _)).IsTrue();
     }
@@ -263,7 +263,7 @@ public sealed class AgentCoverageGapTests
         await using var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
 
         await writer.WriteLineAsync("""{"method":"command","id":2,"actionId":"ping","params":{"label":"tcp-cmd"}}""");
-        var line = await reader.ReadLineAsync();
+        var line = await reader.ReadLineAsync(TimeSpan.FromSeconds(8));
         using var doc = JsonDocument.Parse(line!);
         await Assert.That(doc.RootElement.GetProperty("ok").GetBoolean()).IsTrue();
         await Assert.That(host.Executed[0].Get("label")).IsEqualTo("tcp-cmd");

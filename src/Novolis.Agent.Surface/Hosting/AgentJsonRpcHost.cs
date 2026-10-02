@@ -214,7 +214,7 @@ public sealed class AgentJsonRpcHost : IAsyncDisposable, IAgentTransport
         await _cts.CancelAsync().ConfigureAwait(false);
         try { _listener.Stop(); } catch { /* ignore */ }
         lock (_clientsGate) { _clients.Clear(); }
-        try { await _loop.ConfigureAwait(false); } catch { /* ignore */ }
+        try { await _loop.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false); } catch { /* ignore */ }
         _cts.Dispose();
         try { File.Delete(_definition.RpcMarkerPath); } catch { /* ignore */ }
     }
