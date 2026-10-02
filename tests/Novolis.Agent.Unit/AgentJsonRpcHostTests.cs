@@ -101,6 +101,13 @@ public sealed class AgentJsonRpcHostTests
         await using var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
 
         await writer.WriteLineAsync("""{"jsonrpc":"2.0","method":"subscribe"}""");
+        await writer.WriteLineAsync("""{"jsonrpc":"2.0","method":"hello","id":1}""");
+        var helloLine = await reader.ReadLineAsync(TimeSpan.FromSeconds(8));
+        using (var helloDoc = JsonDocument.Parse(helloLine!))
+        {
+            await Assert.That(helloDoc.RootElement.TryGetProperty("result", out _)).IsTrue();
+        }
+
         host.RaiseChanged("no-id");
         var note = await reader.ReadLineAsync(TimeSpan.FromSeconds(8));
         using var noteDoc = JsonDocument.Parse(note!);
