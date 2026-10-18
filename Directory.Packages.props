@@ -4,10 +4,11 @@
     <CentralPackageFloatingVersionsEnabled>true</CentralPackageFloatingVersionsEnabled>
   </PropertyGroup>
   <ItemGroup>
-    <PackageVersion Include="MessagePack" Version="3.1.11" />
-    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.401" />
-    <PackageVersion Include="JetBrains.Annotations" Version="2025.2.4" />
+    <PackageVersion Include="MessagePack" Version="3.1.12" />
+    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.402" />
+    <PackageVersion Include="JetBrains.Annotations" Version="2026.2.0" />
     <PackageVersion Include="Novolis.Transports.LocalIpc" Version="2026.1.*" />
-    <PackageVersion Include="TUnit" Version="1.72.16" />
+    <PackageVersion Include="TUnit" Version="1.75.0" />
   </ItemGroup>
 </Project>
+
