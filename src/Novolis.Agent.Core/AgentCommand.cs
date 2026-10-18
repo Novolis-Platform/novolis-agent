@@ -1,4 +1,5 @@
-﻿using MessagePack;
+﻿using System.Globalization;
+using MessagePack;
 
 namespace Novolis.Agent.Core;
 
@@ -55,14 +56,20 @@ public sealed class AgentCommand
     {
         value = 0;
         var raw = Get(key);
-        return raw is not null && int.TryParse(raw, out value);
+        return raw is not null
+            && int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
     }
 
     public bool TryGetDouble(string key, out double value)
     {
         value = 0;
         var raw = Get(key);
-        return raw is not null && double.TryParse(raw, out value);
+        return raw is not null
+            && double.TryParse(
+                raw,
+                NumberStyles.Float | NumberStyles.AllowThousands,
+                CultureInfo.InvariantCulture,
+                out value);
     }
 
     public bool TryGetBool(string key, out bool value)
@@ -97,7 +104,8 @@ public sealed class AgentCommand
 
     public AgentCommand With(string key, int value) => With(key, value.ToString());
 
-    public AgentCommand With(string key, double value) => With(key, value.ToString("R"));
+    public AgentCommand With(string key, double value) =>
+        With(key, value.ToString("R", CultureInfo.InvariantCulture));
 
     public AgentCommand With(string key, bool value) => With(key, value ? "true" : "false");
 }
