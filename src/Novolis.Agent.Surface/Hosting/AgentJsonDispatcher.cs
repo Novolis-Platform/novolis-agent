@@ -9,7 +9,10 @@ public static class AgentJsonDispatcher
     public static readonly JsonSerializerOptions JsonOptions = AgentJson.Options;
 
     /// <summary>Dispatches a wire method (accepting <c>agent.*</c>, legacy <c>session.*</c>, and bare aliases).</summary>
-    public static object Dispatch(IAgentHost host, string? method, JsonElement root)
+    public static object Dispatch(IAgentHost host, string? method, JsonElement root) =>
+        Dispatch(host, method, root, context: null);
+
+    public static object Dispatch(IAgentHost host, string? method, JsonElement root, AgentDispatchContext? context)
     {
         ArgumentNullException.ThrowIfNull(host);
 
@@ -23,6 +26,8 @@ public static class AgentJsonDispatcher
             return host.Continue();
         if (AgentMethodNames.IsSubscribe(method))
             return Subscribe(host);
+        if (AgentMethodNames.IsWatch(method) || AgentMethodNames.IsUnwatch(method) || AgentMethodNames.IsWatchNext(method))
+            return DispatchWatch(context, method, root);
         if (AgentMethodNames.IsCommand(method))
         {
             // Prefer full command object (actionId + params); don't peel nested "params" alone.
@@ -69,6 +74,20 @@ public static class AgentJsonDispatcher
             }
         }
 
+        SetString(source, "correlationId", v => cmd.CorrelationId = v);
+        SetLong(source, "expectedRevision", v => cmd.ExpectedRevision = v);
+        SetString(source, "approvalToken", v => cmd.ApprovalToken = v);
+        if (TryGetProperty(source, "arguments", out var arguments) && arguments.ValueKind == JsonValueKind.Object)
+        {
+            cmd.ArgumentsJson = arguments.GetRawText();
+            foreach (var prop in arguments.EnumerateObject())
+            {
+                cmd.Params[prop.Name] = prop.Value.ValueKind == JsonValueKind.String
+                    ? prop.Value.GetString() ?? ""
+                    : prop.Value.ToString();
+            }
+        }
+
         SetString(source, "path", v => cmd.Path = v);
         SetString(source, "nodeId", v => cmd.NodeId = v);
         SetString(source, "parentId", v => cmd.ParentId = v);
@@ -102,6 +121,61 @@ public static class AgentJsonDispatcher
         return cmd;
     }
 
+    private static object DispatchWatch(AgentDispatchContext? context, string? method, JsonElement root)
+    {
+        if (context is null)
+        {
+            throw new InvalidOperationException("Watch methods require a live connection.");
+        }
+
+        if (AgentMethodNames.IsWatch(method))
+        {
+            return context.Broker.Open(ParseWatch(root), context.Sink);
+        }
+
+        if (AgentMethodNames.IsUnwatch(method))
+        {
+            var watchId = ReadString(root, "watchId") ?? "";
+            return context.Broker.Close(watchId, context.Sink);
+        }
+
+        var id = ReadString(root, "watchId") ?? "";
+        var max = ReadInt(root, "maxEvents") ?? 16;
+        return context.Broker.PollAsync(id, max, TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
+    }
+
+    internal static AgentWatchRequest ParseWatch(JsonElement root)
+    {
+        var request = new AgentWatchRequest
+        {
+            CallbackId = ReadString(root, "callbackId"),
+            CorrelationId = ReadString(root, "correlationId"),
+            ResourceId = ReadString(root, "resourceId"),
+            MinSeverity = ReadString(root, "minSeverity"),
+            AfterEventSequence = ReadLong(root, "afterEventSequence"),
+            ReplayLimit = ReadInt(root, "replayLimit"),
+        };
+        if (TryGetProperty(root, "eventNames", out var names) && names.ValueKind == JsonValueKind.Array)
+        {
+            request.EventNames = names.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => item.GetString() ?? "")
+                .Where(item => item.Length > 0)
+                .ToArray();
+        }
+
+        return request;
+    }
+
+    private static string? ReadString(JsonElement element, string name) =>
+        TryGetProperty(element, name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+    private static int? ReadInt(JsonElement element, string name) =>
+        TryGetProperty(element, name, out var value) && value.TryGetInt32(out var parsed) ? parsed : null;
+
+    private static long? ReadLong(JsonElement element, string name) =>
+        TryGetProperty(element, name, out var value) && value.TryGetInt64(out var parsed) ? parsed : null;
+
     private static AgentSubscribeResponse Subscribe(IAgentHost host)
     {
         host.Subscribe();
@@ -132,6 +206,12 @@ public static class AgentJsonDispatcher
     private static void SetFloat(JsonElement element, string name, Action<float?> set)
     {
         if (TryGetProperty(element, name, out var p) && p.ValueKind == JsonValueKind.Number && p.TryGetSingle(out var v))
+            set(v);
+    }
+
+    private static void SetLong(JsonElement element, string name, Action<long?> set)
+    {
+        if (TryGetProperty(element, name, out var p) && p.TryGetInt64(out var v))
             set(v);
     }
 

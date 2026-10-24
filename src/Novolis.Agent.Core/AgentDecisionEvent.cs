@@ -10,4 +10,7 @@ public sealed class AgentDecisionEvent
     [Key(2)] public string HubId { get; set; } = "";
     [Key(3)] public string DecisionLine { get; set; } = "";
     [Key(4)] public AgentSnapshot? Snapshot { get; set; }
+    [Key(5)] public string? CorrelationId { get; set; }
+    [Key(6)] public string? ResourceId { get; set; }
+    [Key(7)] public string? Severity { get; set; }
 }

@@ -1,0 +1,11 @@
+using MessagePack;
+
+namespace Novolis.Agent.Core;
+
+[MessagePackObject]
+public sealed class AgentWatchNextRequest
+{
+    [Key(0)] public long Sequence { get; set; }
+    [Key(1)] public string WatchId { get; set; } = "";
+    [Key(2)] public int MaxEvents { get; set; } = 16;
+}

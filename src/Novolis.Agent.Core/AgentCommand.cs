@@ -11,6 +11,15 @@ public sealed class AgentCommand
 
     [Key(1)] public Dictionary<string, string> Params { get; set; } = new(StringComparer.Ordinal);
 
+    [Key(2)] public string? CorrelationId { get; set; }
+
+    [Key(3)] public long? ExpectedRevision { get; set; }
+
+    [Key(4)] public string? ApprovalToken { get; set; }
+
+    /// <summary>Original JSON arguments when a transport supplied typed values. Params remains the string projection.</summary>
+    [Key(5)] public string? ArgumentsJson { get; set; }
+
     // Scene / CAD typed optional fields (JSON HTTP); ignored by MessagePack key layout beyond 1 when unset.
     [IgnoreMember] public string? Path { get; set; }
     [IgnoreMember] public string? NodeId { get; set; }

@@ -28,6 +28,8 @@ public sealed class AgentSurface : IAsyncDisposable
 
     public AgentStdioHost? Stdio { get; private set; }
 
+    public AgentEventBroker? Broker { get; private set; }
+
     public string? HttpBaseUrl => Http?.BaseUrl;
 
     public string? WebSocketUrl => Http?.WebSocketUrl;
@@ -48,12 +50,12 @@ public sealed class AgentSurface : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(definition);
 
-        var surface = new AgentSurface { Definition = definition };
+        var surface = Create(host, definition);
         var any = false;
 
         if (definition.IsIpcEnabledByEnvironment())
         {
-            var ipc = AgentLocalIpcTransport.Attach(host, definition, preferredIpcAddress);
+            var ipc = AgentLocalIpcTransport.Attach(host, definition, preferredIpcAddress, surface.Broker);
             surface.LocalIpc = ipc;
             surface._hosts.Add(ipc);
             any = true;
@@ -61,7 +63,7 @@ public sealed class AgentSurface : IAsyncDisposable
 
         if (definition.IsHttpEnabledByEnvironment())
         {
-            var http = AgentHttpHost.Attach(host, definition);
+            var http = AgentHttpHost.Attach(host, definition, broker: surface.Broker);
             surface.Http = http;
             surface._hosts.Add(http);
             any = true;
@@ -69,7 +71,7 @@ public sealed class AgentSurface : IAsyncDisposable
 
         if (definition.IsTcpEnabledByEnvironment())
         {
-            var tcp = AgentTcpJsonlHost.Attach(host, definition);
+            var tcp = AgentTcpJsonlHost.Attach(host, definition, broker: surface.Broker);
             surface.Tcp = tcp;
             surface._hosts.Add(tcp);
             any = true;
@@ -77,7 +79,7 @@ public sealed class AgentSurface : IAsyncDisposable
 
         if (definition.IsRpcEnabledByEnvironment())
         {
-            var rpc = AgentJsonRpcHost.Attach(host, definition);
+            var rpc = AgentJsonRpcHost.Attach(host, definition, broker: surface.Broker);
             surface.Rpc = rpc;
             surface._hosts.Add(rpc);
             any = true;
@@ -85,7 +87,7 @@ public sealed class AgentSurface : IAsyncDisposable
 
         if (definition.IsMcpEnabledByEnvironment())
         {
-            var mcp = new AgentMcpStdioTransport(host, definition);
+            var mcp = new AgentMcpStdioTransport(host, definition, broker: surface.Broker);
             _ = mcp.StartAsync();
             surface.Mcp = mcp;
             surface._hosts.Add(mcp);
@@ -94,14 +96,14 @@ public sealed class AgentSurface : IAsyncDisposable
 
         if (definition.IsStdioEnabledByEnvironment())
         {
-            var stdio = new AgentStdioHost(host);
+            var stdio = new AgentStdioHost(host, broker: surface.Broker);
             _ = stdio.StartAsync();
             surface.Stdio = stdio;
             surface._hosts.Add(stdio);
             any = true;
         }
 
-        return any ? surface : null;
+        return Finish(surface, any);
     }
 
     /// <summary>
@@ -114,14 +116,14 @@ public sealed class AgentSurface : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(definition);
         options ??= new AgentAttachOptions();
 
-        var surface = new AgentSurface { Definition = definition };
+        var surface = Create(host, definition);
         var any = false;
 
         if (options.EnableIpc)
         {
             try
             {
-                var ipc = AgentLocalIpcTransport.Attach(host, definition, options.IpcAddress);
+                var ipc = AgentLocalIpcTransport.Attach(host, definition, options.IpcAddress, surface.Broker);
                 surface.LocalIpc = ipc;
                 surface._hosts.Add(ipc);
                 any = true;
@@ -136,7 +138,7 @@ public sealed class AgentSurface : IAsyncDisposable
         {
             try
             {
-                var http = AgentHttpHost.Attach(host, definition, options.HttpPort);
+                var http = AgentHttpHost.Attach(host, definition, options.HttpPort, surface.Broker);
                 surface.Http = http;
                 surface._hosts.Add(http);
                 any = true;
@@ -151,7 +153,7 @@ public sealed class AgentSurface : IAsyncDisposable
         {
             try
             {
-                var tcp = AgentTcpJsonlHost.Attach(host, definition, options.TcpPort);
+                var tcp = AgentTcpJsonlHost.Attach(host, definition, options.TcpPort, surface.Broker);
                 surface.Tcp = tcp;
                 surface._hosts.Add(tcp);
                 any = true;
@@ -166,7 +168,7 @@ public sealed class AgentSurface : IAsyncDisposable
         {
             try
             {
-                var rpc = AgentJsonRpcHost.Attach(host, definition, options.RpcPort);
+                var rpc = AgentJsonRpcHost.Attach(host, definition, options.RpcPort, surface.Broker);
                 surface.Rpc = rpc;
                 surface._hosts.Add(rpc);
                 any = true;
@@ -181,7 +183,7 @@ public sealed class AgentSurface : IAsyncDisposable
         {
             try
             {
-                var mcp = new AgentMcpStdioTransport(host, definition);
+                var mcp = new AgentMcpStdioTransport(host, definition, broker: surface.Broker);
                 _ = mcp.StartAsync();
                 surface.Mcp = mcp;
                 surface._hosts.Add(mcp);
@@ -197,7 +199,7 @@ public sealed class AgentSurface : IAsyncDisposable
         {
             try
             {
-                var stdio = new AgentStdioHost(host);
+                var stdio = new AgentStdioHost(host, broker: surface.Broker);
                 _ = stdio.StartAsync();
                 surface.Stdio = stdio;
                 surface._hosts.Add(stdio);
@@ -209,7 +211,7 @@ public sealed class AgentSurface : IAsyncDisposable
             }
         }
 
-        return any ? surface : null;
+        return Finish(surface, any);
     }
 
     public async ValueTask DisposeAsync()
@@ -221,5 +223,22 @@ public sealed class AgentSurface : IAsyncDisposable
         }
 
         _hosts.Clear();
+        Broker?.Dispose();
+        Broker = null;
+    }
+
+    private static AgentSurface Create(IAgentHost host, AgentSurfaceDefinition definition) =>
+        new() { Definition = definition, Broker = new AgentEventBroker(host) };
+
+    private static AgentSurface? Finish(AgentSurface surface, bool any)
+    {
+        if (any)
+        {
+            return surface;
+        }
+
+        surface.Broker?.Dispose();
+        surface.Broker = null;
+        return null;
     }
 }

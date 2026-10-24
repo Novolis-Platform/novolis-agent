@@ -92,6 +92,12 @@ public sealed class AgentSurfaceDefinition
                 Params = a.Params,
                 Enabled = a.EnabledByDefault,
                 Schema = BuildParamSchema(a.Params),
+                Capability = a.Capability,
+                SafetyClass = string.IsNullOrWhiteSpace(a.SafetyClass) ? AgentSafetyClass.Read : a.SafetyClass,
+                ApprovalRequired = a.ApprovalRequired,
+                Idempotency = a.Idempotency,
+                EffectPreview = a.EffectPreview,
+                MetadataVersion = AgentMetadata.Version,
             })
             .GroupBy(a => a.Id, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
@@ -115,6 +121,9 @@ public sealed class AgentSurfaceDefinition
                 AgentMethodNames.Command,
                 AgentMethodNames.Continue,
                 AgentMethodNames.Subscribe,
+                AgentMethodNames.Watch,
+                AgentMethodNames.WatchNext,
+                AgentMethodNames.Unwatch,
             ];
         }
 
@@ -164,6 +173,13 @@ public sealed class AgentSurfaceDefinition
                 Summary = a.Summary,
                 Params = a.Params,
                 Schema = a.Schema,
+                Capability = a.Capability,
+                SafetyClass = a.SafetyClass,
+                ApprovalRequired = a.ApprovalRequired,
+                Idempotency = a.Idempotency,
+                EffectPreview = a.EffectPreview,
+                OutputSchema = a.OutputSchema,
+                MetadataVersion = a.MetadataVersion,
             };
             return policy?.Invoke(copy) ?? copy;
         }).ToArray();
@@ -293,11 +309,17 @@ public sealed class AgentSurfaceDefinition
             return null;
 
         var props = new Dictionary<string, object?>();
+        var required = new HashSet<string>(StringComparer.Ordinal);
         foreach (var part in hint.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            var body = part.EndsWith('?') ? part[..^1] : part;
+            var optional = part.EndsWith('?');
+            var body = optional ? part[..^1] : part;
             var bits = body.Split('|', 2);
             var name = bits[0].Trim();
+            if (!optional && name.Length > 0)
+            {
+                required.Add(name);
+            }
             props[name] = bits.Length == 2
                 ? new Dictionary<string, object?>
                 {
@@ -310,6 +332,7 @@ public sealed class AgentSurfaceDefinition
         return new Dictionary<string, object?>
         {
             ["type"] = "object",
+            ["required"] = props.Keys.Where(name => required.Contains(name)).ToArray(),
             ["properties"] = props,
         };
     }

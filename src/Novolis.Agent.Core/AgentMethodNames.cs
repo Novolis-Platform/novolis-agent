@@ -8,6 +8,11 @@ public static class AgentMethodNames
     public const string Command = "agent.command";
     public const string Continue = "agent.continue";
     public const string Subscribe = "agent.subscribe";
+    public const string Watch = "agent.watch";
+    public const string WatchNext = "agent.watch.next";
+    public const string Unwatch = "agent.unwatch";
+    public const string Event = "agent.event";
+    public const string WatchClosed = "agent.watchClosed";
 
     public const string Decision = "agent.decision";
     public const string Changed = "agent.changed";
@@ -44,6 +49,32 @@ public static class AgentMethodNames
 
     public static bool IsSubscribe(string? method) =>
         Equals(method, Subscribe) || Equals(method, Legacy.Subscribe) || Equals(method, "subscribe");
+
+    public static bool IsWatch(string? method) =>
+        Equals(method, Watch) || Equals(method, "watch");
+
+    public static bool IsWatchNext(string? method) =>
+        Equals(method, WatchNext) || Equals(method, "watch.next");
+
+    public static bool IsUnwatch(string? method) =>
+        Equals(method, Unwatch) || Equals(method, "unwatch");
+
+    public static string CanonicalEventName(string? method)
+    {
+        if (IsDecision(method)) return Decision;
+        if (IsChanged(method)) return Changed;
+        if (IsActionResult(method)) return ActionResult;
+        return method ?? "";
+    }
+
+    public static bool IsDecision(string? method) =>
+        Equals(method, Decision) || Equals(method, Legacy.Decision) || Equals(method, "decision");
+
+    public static bool IsChanged(string? method) =>
+        Equals(method, Changed) || Equals(method, Legacy.Changed) || Equals(method, "changed");
+
+    public static bool IsActionResult(string? method) =>
+        Equals(method, ActionResult) || Equals(method, Legacy.ActionResult) || Equals(method, "actionResult");
 
     private static bool Equals(string? a, string b) =>
         string.Equals(a, b, StringComparison.OrdinalIgnoreCase);

@@ -16,14 +16,18 @@ public sealed class AgentJsonRpcHost : IAsyncDisposable, IAgentTransport
     private readonly Task _loop;
     private readonly object _clientsGate = new();
     private readonly List<StreamWriter> _clients = new();
+    private readonly AgentEventBroker _broker;
+    private readonly bool _ownsBroker;
     private readonly Action<AgentDecisionEvent> _onDecision;
     private readonly Action<AgentChangedEvent> _onChanged;
     private readonly Action<AgentActionResultEvent> _onActionResult;
 
-    private AgentJsonRpcHost(IAgentHost host, AgentSurfaceDefinition definition, int port)
+    private AgentJsonRpcHost(IAgentHost host, AgentSurfaceDefinition definition, int port, AgentEventBroker? broker)
     {
         _host = host;
         _definition = definition;
+        _ownsBroker = broker is null;
+        _broker = broker ?? new AgentEventBroker(host);
         Port = port;
         _listener = new TcpListener(IPAddress.Loopback, port);
         _onDecision = e => Notify(AgentMethodNames.Decision, e);
@@ -48,11 +52,11 @@ public sealed class AgentJsonRpcHost : IAsyncDisposable, IAgentTransport
 
     public int Port { get; }
 
-    public static AgentJsonRpcHost Attach(IAgentHost host, AgentSurfaceDefinition definition, int? port = null)
+    public static AgentJsonRpcHost Attach(IAgentHost host, AgentSurfaceDefinition definition, int? port = null, AgentEventBroker? broker = null)
     {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(definition);
-        return new AgentJsonRpcHost(host, definition, port ?? definition.ResolveRpcPort());
+        return new AgentJsonRpcHost(host, definition, port ?? definition.ResolveRpcPort(), broker);
     }
 
     public static AgentJsonRpcHost? TryAttachFromEnvironment(IAgentHost host, AgentSurfaceDefinition definition)
@@ -105,6 +109,22 @@ public sealed class AgentJsonRpcHost : IAsyncDisposable, IAgentTransport
         {
             using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
             await using var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
+            var sink = new AgentQueueSink(Guid.NewGuid().ToString("n"));
+            _ = Task.Run(async () =>
+            {
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    var batch = await sink.TakeAsync(8, TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+                    foreach (var evt in batch)
+                    {
+                        var line = JsonSerializer.Serialize(new { jsonrpc = "2.0", method = AgentMethodNames.Event, @params = evt }, AgentJson.Options);
+                        lock (_clientsGate)
+                        {
+                            writer.WriteLine(line);
+                        }
+                    }
+                }
+            }, CancellationToken.None);
 
             try
             {
@@ -114,7 +134,7 @@ public sealed class AgentJsonRpcHost : IAsyncDisposable, IAgentTransport
                     if (line is null) break;
                     if (string.IsNullOrWhiteSpace(line)) continue;
 
-                    await HandleRequestAsync(writer, line, cancellationToken).ConfigureAwait(false);
+                    await HandleRequestAsync(writer, sink, line, cancellationToken).ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException)
@@ -127,6 +147,7 @@ public sealed class AgentJsonRpcHost : IAsyncDisposable, IAgentTransport
             }
             finally
             {
+                _broker.CloseConnection(sink);
                 lock (_clientsGate)
                 {
                     _clients.Remove(writer);
@@ -135,7 +156,7 @@ public sealed class AgentJsonRpcHost : IAsyncDisposable, IAgentTransport
         }
     }
 
-    private async Task HandleRequestAsync(StreamWriter writer, string line, CancellationToken cancellationToken)
+    private async Task HandleRequestAsync(StreamWriter writer, AgentQueueSink sink, string line, CancellationToken cancellationToken)
     {
         JsonElement? id = null;
         var parsed = false;
@@ -157,7 +178,7 @@ public sealed class AgentJsonRpcHost : IAsyncDisposable, IAgentTransport
             }
 
             var target = paramsEl.ValueKind == JsonValueKind.Undefined ? root : paramsEl;
-            var result = AgentJsonDispatcher.Dispatch(_host, method, target);
+            var result = AgentJsonDispatcher.Dispatch(_host, method, target, new AgentDispatchContext(_broker, sink));
 
             if (id is null)
                 return;
@@ -216,6 +237,10 @@ public sealed class AgentJsonRpcHost : IAsyncDisposable, IAgentTransport
         lock (_clientsGate) { _clients.Clear(); }
         try { await _loop.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false); } catch { /* ignore */ }
         _cts.Dispose();
+        if (_ownsBroker)
+        {
+            _broker.Dispose();
+        }
         try { File.Delete(_definition.RpcMarkerPath); } catch { /* ignore */ }
     }
 }

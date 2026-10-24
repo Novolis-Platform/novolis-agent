@@ -10,14 +10,21 @@ namespace Novolis.Agent.Surface;
 public sealed class AgentStdioHost : IAsyncDisposable, IAgentTransport
 {
     private readonly IAgentHost _host;
+    private readonly AgentEventBroker _broker;
+    private readonly bool _ownsBroker;
+    private readonly AgentQueueSink _sink;
+    private readonly SemaphoreSlim _write = new(1, 1);
     private readonly TextReader _input;
     private readonly TextWriter _output;
     private CancellationTokenSource? _cts;
     private Task? _loop;
 
-    public AgentStdioHost(IAgentHost host, TextReader? input = null, TextWriter? output = null)
+    public AgentStdioHost(IAgentHost host, TextReader? input = null, TextWriter? output = null, AgentEventBroker? broker = null)
     {
         _host = host ?? throw new ArgumentNullException(nameof(host));
+        _ownsBroker = broker is null;
+        _broker = broker ?? new AgentEventBroker(host);
+        _sink = new AgentQueueSink("stdio");
         _input = input ?? Console.In;
         _output = output ?? Console.Out;
     }
@@ -43,13 +50,23 @@ public sealed class AgentStdioHost : IAsyncDisposable, IAgentTransport
         }
     }
 
-    public async ValueTask DisposeAsync() => await StopAsync().ConfigureAwait(false);
+    public async ValueTask DisposeAsync()
+    {
+        _broker.CloseConnection(_sink);
+        if (_ownsBroker)
+        {
+            _broker.Dispose();
+        }
+
+        await StopAsync().ConfigureAwait(false);
+    }
 
     public async Task RunUntilEofAsync(CancellationToken cancellationToken = default) =>
         await RunAsync(cancellationToken).ConfigureAwait(false);
 
     private async Task RunAsync(CancellationToken cancellationToken)
     {
+        var events = Task.Run(() => PumpAsync(cancellationToken), CancellationToken.None);
         while (!cancellationToken.IsCancellationRequested)
         {
             var line = await _input.ReadLineAsync(cancellationToken).ConfigureAwait(false);
@@ -63,7 +80,7 @@ public sealed class AgentStdioHost : IAsyncDisposable, IAgentTransport
                 var root = doc.RootElement;
                 var method = root.TryGetProperty("method", out var m) ? m.GetString() : null;
                 var id = root.TryGetProperty("id", out var idEl) ? idEl.GetInt64() : 0L;
-                var result = AgentJsonDispatcher.Dispatch(_host, method, root);
+                var result = AgentJsonDispatcher.Dispatch(_host, method, root, new AgentDispatchContext(_broker, _sink));
                 await WriteAsync(new { id, ok = true, result }, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)
@@ -71,12 +88,34 @@ public sealed class AgentStdioHost : IAsyncDisposable, IAgentTransport
                 await WriteAsync(new { ok = false, error = ex.Message }, cancellationToken).ConfigureAwait(false);
             }
         }
+
+        try { await events.WaitAsync(TimeSpan.FromSeconds(1), CancellationToken.None).ConfigureAwait(false); } catch { /* ignore */ }
+    }
+
+    private async Task PumpAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            var batch = await _sink.TakeAsync(8, TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+            foreach (var evt in batch)
+            {
+                await WriteAsync(new { eventName = AgentMethodNames.Event, payload = evt }, CancellationToken.None).ConfigureAwait(false);
+            }
+        }
     }
 
     private async Task WriteAsync(object payload, CancellationToken cancellationToken)
     {
-        var json = JsonSerializer.Serialize(payload, AgentJson.Options);
-        await _output.WriteLineAsync(json.AsMemory(), cancellationToken).ConfigureAwait(false);
-        await _output.FlushAsync(cancellationToken).ConfigureAwait(false);
+        await _write.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var json = JsonSerializer.Serialize(payload, AgentJson.Options);
+            await _output.WriteLineAsync(json.AsMemory(), cancellationToken).ConfigureAwait(false);
+            await _output.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _write.Release();
+        }
     }
 }

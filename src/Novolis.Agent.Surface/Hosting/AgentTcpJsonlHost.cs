@@ -16,14 +16,18 @@ public sealed class AgentTcpJsonlHost : IAsyncDisposable, IAgentTransport
     private readonly Task _loop;
     private readonly object _eventGate = new();
     private readonly List<StreamWriter> _eventWriters = new();
+    private readonly AgentEventBroker _broker;
+    private readonly bool _ownsBroker;
     private readonly Action<AgentDecisionEvent> _onDecision;
     private readonly Action<AgentChangedEvent> _onChanged;
     private readonly Action<AgentActionResultEvent> _onActionResult;
 
-    private AgentTcpJsonlHost(IAgentHost host, AgentSurfaceDefinition definition, int port)
+    private AgentTcpJsonlHost(IAgentHost host, AgentSurfaceDefinition definition, int port, AgentEventBroker? broker)
     {
         _host = host;
         _definition = definition;
+        _ownsBroker = broker is null;
+        _broker = broker ?? new AgentEventBroker(host);
         Port = port;
         _listener = new TcpListener(IPAddress.Loopback, port);
         _onDecision = e => Broadcast(AgentMethodNames.Decision, e);
@@ -48,11 +52,11 @@ public sealed class AgentTcpJsonlHost : IAsyncDisposable, IAgentTransport
 
     public int Port { get; }
 
-    public static AgentTcpJsonlHost Attach(IAgentHost host, AgentSurfaceDefinition definition, int? port = null)
+    public static AgentTcpJsonlHost Attach(IAgentHost host, AgentSurfaceDefinition definition, int? port = null, AgentEventBroker? broker = null)
     {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(definition);
-        return new AgentTcpJsonlHost(host, definition, port ?? definition.ResolveTcpPort());
+        return new AgentTcpJsonlHost(host, definition, port ?? definition.ResolveTcpPort(), broker);
     }
 
     public static AgentTcpJsonlHost? TryAttachFromEnvironment(IAgentHost host, AgentSurfaceDefinition definition)
@@ -105,6 +109,22 @@ public sealed class AgentTcpJsonlHost : IAsyncDisposable, IAgentTransport
         {
             using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
             await using var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
+            var sink = new AgentQueueSink(Guid.NewGuid().ToString("n"));
+            var pump = Task.Run(async () =>
+            {
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    var batch = await sink.TakeAsync(8, TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+                    foreach (var evt in batch)
+                    {
+                        var line = JsonSerializer.Serialize(new { eventName = AgentMethodNames.Event, payload = evt }, AgentJson.Options);
+                        lock (_eventGate)
+                        {
+                            writer.WriteLine(line);
+                        }
+                    }
+                }
+            }, CancellationToken.None);
 
             try
             {
@@ -130,7 +150,7 @@ public sealed class AgentTcpJsonlHost : IAsyncDisposable, IAgentTransport
                             }
                         }
 
-                        var result = AgentJsonDispatcher.Dispatch(_host, method, root);
+                        var result = AgentJsonDispatcher.Dispatch(_host, method, root, new AgentDispatchContext(_broker, sink));
                         var payload = JsonSerializer.Serialize(new { id, ok = true, result }, AgentJson.Options);
                         await writer.WriteLineAsync(payload.AsMemory(), cancellationToken).ConfigureAwait(false);
                     }
@@ -151,6 +171,7 @@ public sealed class AgentTcpJsonlHost : IAsyncDisposable, IAgentTransport
             }
             finally
             {
+                _broker.CloseConnection(sink);
                 lock (_eventGate)
                 {
                     _eventWriters.Remove(writer);
@@ -196,6 +217,10 @@ public sealed class AgentTcpJsonlHost : IAsyncDisposable, IAgentTransport
         try { _listener.Stop(); } catch { /* ignore */ }
         try { await _loop.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false); } catch { /* ignore */ }
         _cts.Dispose();
+        if (_ownsBroker)
+        {
+            _broker.Dispose();
+        }
         try { File.Delete(_definition.TcpMarkerPath); } catch { /* ignore */ }
     }
 }

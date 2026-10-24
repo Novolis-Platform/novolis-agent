@@ -12,4 +12,7 @@ public sealed class AgentCommandResult
     [Key(4)] public string? ErrorCode { get; set; }
     [Key(5)] public AgentSnapshot? Snapshot { get; set; }
     [Key(6)] public string? NodeId { get; set; }
+    [Key(7)] public string? CorrelationId { get; set; }
+    [Key(8)] public AgentReceipt? Receipt { get; set; }
+    [Key(9)] public long? StateRevision { get; set; }
 }

@@ -62,6 +62,8 @@ public sealed class FakeAgentHost : IAgentHost
     public void RaiseChanged(string reason = "changed") =>
         Changed?.Invoke(new AgentChangedEvent { Reason = reason, Snapshot = SnapshotResponse });
 
+    public void RaiseChanged(AgentChangedEvent evt) => Changed?.Invoke(evt);
+
     public void RaiseDecision(string line = "decide") =>
         Decision?.Invoke(new AgentDecisionEvent { DecisionLine = line, Snapshot = SnapshotResponse });
 

@@ -14,14 +14,18 @@ public sealed class AgentLocalIpcTransport : IAsyncDisposable, IAgentTransport
     private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly object _subscribersGate = new();
     private readonly HashSet<ILocalIpcConnection> _subscribers = new();
+    private readonly AgentEventBroker _broker;
+    private readonly bool _ownsBroker;
     private long _eventSequence;
     private ILocalIpcListener? _listener;
 
-    private AgentLocalIpcTransport(IAgentHost host, AgentSurfaceDefinition definition, LocalIpcEndpoint endpoint)
+    private AgentLocalIpcTransport(IAgentHost host, AgentSurfaceDefinition definition, LocalIpcEndpoint endpoint, AgentEventBroker? broker)
     {
         _host = host;
         _definition = definition;
         _endpoint = endpoint;
+        _ownsBroker = broker is null;
+        _broker = broker ?? new AgentEventBroker(host);
         _host.Decision += OnDecision;
         _host.Changed += OnChanged;
         _host.ActionResult += OnActionResult;
@@ -30,12 +34,12 @@ public sealed class AgentLocalIpcTransport : IAsyncDisposable, IAgentTransport
 
     public string Kind => "local-ipc";
 
-    public static AgentLocalIpcTransport Attach(IAgentHost host, AgentSurfaceDefinition definition, string? endpointAddress = null)
+    public static AgentLocalIpcTransport Attach(IAgentHost host, AgentSurfaceDefinition definition, string? endpointAddress = null, AgentEventBroker? broker = null)
     {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(definition);
         var endpoint = AgentEndpoints.CreateIpcEndpoint(definition, endpointAddress);
-        return new AgentLocalIpcTransport(host, definition, endpoint);
+        return new AgentLocalIpcTransport(host, definition, endpoint, broker);
     }
 
     public static AgentLocalIpcTransport? TryAttachFromEnvironment(
@@ -109,6 +113,26 @@ public sealed class AgentLocalIpcTransport : IAsyncDisposable, IAgentTransport
     {
         await using (connection)
         {
+            var sink = new AgentQueueSink(Guid.NewGuid().ToString("n"));
+            _ = Task.Run(async () =>
+            {
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    var batch = await sink.TakeAsync(8, TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+                    foreach (var evt in batch)
+                    {
+                        try
+                        {
+                            await connection.SendMessageAsync(evt.EventSequence, AgentFrameKinds.Event, AgentMethodNames.Event, evt, CancellationToken.None)
+                                .ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                            return;
+                        }
+                    }
+                }
+            }, CancellationToken.None);
             try
             {
                 await foreach (var frame in connection.ReadAllAsync(cancellationToken).ConfigureAwait(false))
@@ -118,7 +142,7 @@ public sealed class AgentLocalIpcTransport : IAsyncDisposable, IAgentTransport
 
                     try
                     {
-                        await DispatchAsync(connection, frame, cancellationToken).ConfigureAwait(false);
+                        await DispatchAsync(connection, sink, frame, cancellationToken).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException)
                     {
@@ -136,6 +160,7 @@ public sealed class AgentLocalIpcTransport : IAsyncDisposable, IAgentTransport
             }
             finally
             {
+                _broker.CloseConnection(sink);
                 lock (_subscribersGate)
                 {
                     _subscribers.Remove(connection);
@@ -144,7 +169,7 @@ public sealed class AgentLocalIpcTransport : IAsyncDisposable, IAgentTransport
         }
     }
 
-    private async Task DispatchAsync(ILocalIpcConnection connection, LocalIpcFrame frame, CancellationToken cancellationToken)
+    private async Task DispatchAsync(ILocalIpcConnection connection, AgentQueueSink sink, LocalIpcFrame frame, CancellationToken cancellationToken)
     {
         if (AgentMethodNames.IsHello(frame.Name))
         {
@@ -196,6 +221,27 @@ public sealed class AgentLocalIpcTransport : IAsyncDisposable, IAgentTransport
                     new AgentSubscribeResponse { Sequence = req.Sequence, Ok = true },
                     cancellationToken)
                 .ConfigureAwait(false);
+        }
+        else if (AgentMethodNames.IsWatch(frame.Name))
+        {
+            var req = AgentProtocolCodec.Deserialize<AgentWatchRequest>(frame.Payload);
+            var res = _broker.Open(req, sink);
+            res.Sequence = req.Sequence;
+            await ReplyAsync(connection, frame, res, cancellationToken).ConfigureAwait(false);
+        }
+        else if (AgentMethodNames.IsUnwatch(frame.Name))
+        {
+            var req = AgentProtocolCodec.Deserialize<AgentUnwatchRequest>(frame.Payload);
+            var res = _broker.Close(req.WatchId, sink);
+            res.Sequence = req.Sequence;
+            await ReplyAsync(connection, frame, res, cancellationToken).ConfigureAwait(false);
+        }
+        else if (AgentMethodNames.IsWatchNext(frame.Name))
+        {
+            var req = AgentProtocolCodec.Deserialize<AgentWatchNextRequest>(frame.Payload);
+            var res = await _broker.PollAsync(req.WatchId, req.MaxEvents, TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+            res.Sequence = req.Sequence;
+            await ReplyAsync(connection, frame, res, cancellationToken).ConfigureAwait(false);
         }
         else
         {
@@ -302,6 +348,10 @@ public sealed class AgentLocalIpcTransport : IAsyncDisposable, IAgentTransport
         }
 
         _cts.Dispose();
+        if (_ownsBroker)
+        {
+            _broker.Dispose();
+        }
         try { File.Delete(_definition.IpcMarkerPath); } catch { /* ignore */ }
     }
 }

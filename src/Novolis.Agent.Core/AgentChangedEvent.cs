@@ -10,4 +10,7 @@ public sealed class AgentChangedEvent
     [Key(2)] public AgentSnapshot? Snapshot { get; set; }
     [Key(3)] public string? DocumentName { get; set; }
     [Key(4)] public int NodeCount { get; set; }
+    [Key(5)] public string? CorrelationId { get; set; }
+    [Key(6)] public string? ResourceId { get; set; }
+    [Key(7)] public string? Severity { get; set; }
 }

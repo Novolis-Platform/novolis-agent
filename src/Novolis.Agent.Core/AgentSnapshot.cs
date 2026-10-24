@@ -38,6 +38,10 @@ public sealed class AgentSnapshot
     [Key(28)] public string? SelectionId { get; set; }
     [Key(29)] public string? ActiveCameraId { get; set; }
     [Key(30)] public object? Document { get; set; }
+    [Key(31)] public long StateRevision { get; set; }
+    [Key(32)] public AgentObservation[] Observations { get; set; } = [];
+    [Key(33)] public AgentReceipt? Receipt { get; set; }
+    [Key(34)] public string MetadataVersion { get; set; } = "";
 
     public string Line(string key) =>
         StatusLines.TryGetValue(key, out var value) ? value : "";

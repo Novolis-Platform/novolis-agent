@@ -18,18 +18,23 @@ public sealed class AgentHttpHost : IAsyncDisposable, IAgentTransport
     private readonly HttpListener _listener;
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _loop;
+    private readonly AgentEventBroker _broker;
+    private readonly bool _ownsBroker;
     private readonly object _fanoutGate = new();
     private readonly List<StreamWriter> _sseClients = new();
     private readonly List<WebSocket> _wsClients = new();
     private readonly Action<AgentDecisionEvent> _onDecision;
     private readonly Action<AgentChangedEvent> _onChanged;
     private readonly Action<AgentActionResultEvent> _onActionResult;
+    private readonly SemaphoreSlim _wsSend = new(1, 1);
     private long _eventSequence;
 
-    private AgentHttpHost(IAgentHost host, AgentSurfaceDefinition definition, string prefix, int port)
+    private AgentHttpHost(IAgentHost host, AgentSurfaceDefinition definition, string prefix, int port, AgentEventBroker? broker)
     {
         _host = host;
         _definition = definition;
+        _ownsBroker = broker is null;
+        _broker = broker ?? new AgentEventBroker(host);
         _document = AgentSurfaceDocument.From(definition, port, definition.ResolveTcpPort(), definition.ResolveRpcPort());
         BaseUrl = prefix.TrimEnd('/');
         var listenPrefix = prefix.EndsWith('/') ? prefix : prefix + "/";
@@ -54,12 +59,12 @@ public sealed class AgentHttpHost : IAsyncDisposable, IAgentTransport
         (BaseUrl.StartsWith("https", StringComparison.OrdinalIgnoreCase) ? "wss" + BaseUrl[5..] : "ws" + BaseUrl[4..])
         + "/agent/ws";
 
-    public static AgentHttpHost Attach(IAgentHost host, AgentSurfaceDefinition definition, int? port = null)
+    public static AgentHttpHost Attach(IAgentHost host, AgentSurfaceDefinition definition, int? port = null, AgentEventBroker? broker = null)
     {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(definition);
         var p = port ?? definition.ResolveHttpPort();
-        return new AgentHttpHost(host, definition, $"http://127.0.0.1:{p}/", p);
+        return new AgentHttpHost(host, definition, $"http://127.0.0.1:{p}/", p, broker);
     }
 
     public static AgentHttpHost? TryAttachFromEnvironment(IAgentHost host, AgentSurfaceDefinition definition)
@@ -172,6 +177,12 @@ public sealed class AgentHttpHost : IAsyncDisposable, IAgentTransport
                 return;
             }
 
+            if (path == "/agent/watch" && req.HttpMethod == "GET")
+            {
+                await HandleWatchSseAsync(context, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
             object result;
             if (path == "/agent/document" && req.HttpMethod == "GET")
                 result = JsonSerializer.Deserialize<object>(_document.ToJson(), AgentJson.Options)!;
@@ -195,6 +206,31 @@ public sealed class AgentHttpHost : IAsyncDisposable, IAgentTransport
             {
                 _host.Subscribe();
                 result = new AgentSubscribeResponse { Ok = true };
+            }
+            else if (path == "/agent/watch" && req.HttpMethod == "POST")
+            {
+                using var watchDoc = await ReadJsonAsync(req, cancellationToken).ConfigureAwait(false);
+                await WriteJsonAsync(context.Response, 200, new { ok = true, result = _broker.OpenPoll(AgentJsonDispatcher.ParseWatch(watchDoc.RootElement)) }, cancellationToken, cors: false)
+                    .ConfigureAwait(false);
+                return;
+            }
+            else if (path == "/agent/watch/next" && req.HttpMethod == "POST")
+            {
+                using var nextDoc = await ReadJsonAsync(req, cancellationToken).ConfigureAwait(false);
+                var watchId = nextDoc.RootElement.TryGetProperty("watchId", out var watchIdEl) ? watchIdEl.GetString() ?? "" : "";
+                var max = nextDoc.RootElement.TryGetProperty("maxEvents", out var maxEl) && maxEl.TryGetInt32(out var parsed) ? parsed : 16;
+                var polled = await _broker.PollAsync(watchId, max, TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+                await WriteJsonAsync(context.Response, 200, new { ok = true, result = polled }, cancellationToken, cors: false)
+                    .ConfigureAwait(false);
+                return;
+            }
+            else if (path == "/agent/unwatch" && req.HttpMethod == "POST")
+            {
+                using var closeDoc = await ReadJsonAsync(req, cancellationToken).ConfigureAwait(false);
+                var watchId = closeDoc.RootElement.TryGetProperty("watchId", out var watchIdEl) ? watchIdEl.GetString() ?? "" : "";
+                await WriteJsonAsync(context.Response, 200, new { ok = true, result = _broker.Close(watchId, sink: null) }, cancellationToken, cors: false)
+                    .ConfigureAwait(false);
+                return;
             }
             else if (path == "/agent/command" && req.HttpMethod == "POST")
             {
@@ -272,6 +308,20 @@ public sealed class AgentHttpHost : IAsyncDisposable, IAgentTransport
         }
 
         var socket = wsContext.WebSocket;
+        var sink = new AgentQueueSink(Guid.NewGuid().ToString("n"));
+        using var socketCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var pump = Task.Run(async () =>
+        {
+            while (!socketCts.IsCancellationRequested)
+            {
+                var batch = await sink.TakeAsync(8, TimeSpan.FromSeconds(15), socketCts.Token).ConfigureAwait(false);
+                foreach (var evt in batch)
+                {
+                    await SendWsFrameAsync(socket, evt.EventSequence, AgentFrameKinds.Event, AgentMethodNames.Event, evt, socketCts.Token)
+                        .ConfigureAwait(false);
+                }
+            }
+        }, CancellationToken.None);
         lock (_fanoutGate)
         {
             _wsClients.Add(socket);
@@ -295,7 +345,7 @@ public sealed class AgentHttpHost : IAsyncDisposable, IAgentTransport
                     continue;
 
                 var text = Encoding.UTF8.GetString(buffer, 0, result.Count);
-                await HandleWsMessageAsync(socket, text, cancellationToken).ConfigureAwait(false);
+                await HandleWsMessageAsync(socket, sink, text, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)
@@ -308,6 +358,9 @@ public sealed class AgentHttpHost : IAsyncDisposable, IAgentTransport
         }
         finally
         {
+            _broker.CloseConnection(sink);
+            await socketCts.CancelAsync().ConfigureAwait(false);
+            try { await pump.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); } catch { /* ignore */ }
             lock (_fanoutGate)
             {
                 _wsClients.Remove(socket);
@@ -324,7 +377,7 @@ public sealed class AgentHttpHost : IAsyncDisposable, IAgentTransport
         }
     }
 
-    private async Task HandleWsMessageAsync(WebSocket socket, string text, CancellationToken cancellationToken)
+    private async Task HandleWsMessageAsync(WebSocket socket, AgentQueueSink sink, string text, CancellationToken cancellationToken)
     {
         long sequence = 0;
         var method = "";
@@ -336,7 +389,7 @@ public sealed class AgentHttpHost : IAsyncDisposable, IAgentTransport
             method = root.TryGetProperty("method", out var m) ? m.GetString() ?? "" : "";
             var payload = root.TryGetProperty("payload", out var p) ? p : default;
             var target = payload.ValueKind == JsonValueKind.Undefined ? root : payload;
-            var result = AgentJsonDispatcher.Dispatch(_host, method, target);
+            var result = AgentJsonDispatcher.Dispatch(_host, method, target, new AgentDispatchContext(_broker, sink));
             await SendWsFrameAsync(socket, sequence, AgentFrameKinds.Response, method, result, cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -347,7 +400,7 @@ public sealed class AgentHttpHost : IAsyncDisposable, IAgentTransport
         }
     }
 
-    private static async Task SendWsFrameAsync(
+    private async Task SendWsFrameAsync(
         WebSocket socket,
         long sequence,
         string kind,
@@ -358,15 +411,80 @@ public sealed class AgentHttpHost : IAsyncDisposable, IAgentTransport
         if (socket.State != WebSocketState.Open)
             return;
 
-        var json = JsonSerializer.Serialize(new { sequence, kind, method, payload }, AgentJson.Options);
-        var bytes = Encoding.UTF8.GetBytes(json);
+        await _wsSend.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            var json = JsonSerializer.Serialize(new { sequence, kind, method, payload }, AgentJson.Options);
+            var bytes = Encoding.UTF8.GetBytes(json);
             await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, cancellationToken).ConfigureAwait(false);
         }
         catch (WebSocketException)
         {
             // client gone
+        }
+        finally
+        {
+            _wsSend.Release();
+        }
+    }
+
+    private async Task HandleWatchSseAsync(HttpListenerContext context, CancellationToken cancellationToken)
+    {
+        var response = context.Response;
+        response.StatusCode = 200;
+        response.ContentType = "text/event-stream";
+        response.Headers["Cache-Control"] = "no-cache";
+        response.SendChunked = true;
+        var writer = new StreamWriter(response.OutputStream, new UTF8Encoding(false)) { AutoFlush = true };
+        var sink = new AgentQueueSink(Guid.NewGuid().ToString("n"));
+        var query = context.Request.QueryString;
+        var names = (query["eventNames"] ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        long? after = long.TryParse(query["afterEventSequence"], out var afterValue) ? afterValue : null;
+        if (context.Request.Headers["Last-Event-ID"] is string last && long.TryParse(last, out var lastValue))
+        {
+            after = lastValue;
+        }
+
+        var opened = _broker.Open(new AgentWatchRequest
+        {
+            EventNames = names,
+            CallbackId = query["callbackId"],
+            CorrelationId = query["correlationId"],
+            ResourceId = query["resourceId"],
+            MinSeverity = query["minSeverity"],
+            AfterEventSequence = after,
+        }, sink);
+        try
+        {
+            var hello = JsonSerializer.Serialize(opened, AgentJson.Options);
+            await writer.WriteAsync($"event: {AgentMethodNames.Watch}\ndata: {hello}\n\n").ConfigureAwait(false);
+            while (!cancellationToken.IsCancellationRequested && opened.Ok)
+            {
+                var batch = await sink.TakeAsync(8, TimeSpan.FromSeconds(15), cancellationToken).ConfigureAwait(false);
+                foreach (var evt in batch)
+                {
+                    var data = JsonSerializer.Serialize(evt, AgentJson.Options);
+                    await writer.WriteAsync($"id: {evt.EventSequence}\nevent: {AgentMethodNames.Event}\ndata: {data}\n\n").ConfigureAwait(false);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Client or host shut down.
+        }
+        catch
+        {
+            // Client gone.
+        }
+        finally
+        {
+            if (opened.Ok)
+            {
+                _broker.Close(opened.WatchId, sink, "disconnect");
+            }
+
+            try { writer.Dispose(); } catch { /* ignore */ }
+            try { response.Close(); } catch { /* ignore */ }
         }
     }
 
@@ -462,17 +580,6 @@ public sealed class AgentHttpHost : IAsyncDisposable, IAgentTransport
 
     private async Task BroadcastWsAsync(long sequence, string eventName, object payload)
     {
-        string json;
-        try
-        {
-            json = JsonSerializer.Serialize(new { sequence, kind = AgentFrameKinds.Event, method = eventName, payload }, AgentJson.Options);
-        }
-        catch
-        {
-            return;
-        }
-
-        var bytes = Encoding.UTF8.GetBytes(json);
         List<WebSocket> targets;
         lock (_fanoutGate)
         {
@@ -484,7 +591,7 @@ public sealed class AgentHttpHost : IAsyncDisposable, IAgentTransport
             try
             {
                 if (socket.State == WebSocketState.Open)
-                    await socket.SendAsync(bytes, WebSocketMessageType.Text, true, CancellationToken.None).ConfigureAwait(false);
+                    await SendWsFrameAsync(socket, sequence, AgentFrameKinds.Event, eventName, payload, CancellationToken.None).ConfigureAwait(false);
             }
             catch
             {
@@ -507,9 +614,13 @@ public sealed class AgentHttpHost : IAsyncDisposable, IAgentTransport
         HttpListenerResponse response,
         int status,
         object payload,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool cors = true)
     {
-        WriteCors(response);
+        if (cors)
+        {
+            WriteCors(response);
+        }
         response.StatusCode = status;
         response.ContentType = "application/json; charset=utf-8";
         var bytes = JsonSerializer.SerializeToUtf8Bytes(payload, AgentJson.Options);
@@ -553,6 +664,10 @@ public sealed class AgentHttpHost : IAsyncDisposable, IAgentTransport
 
         try { await _loop.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false); } catch { /* ignore */ }
         _cts.Dispose();
+        if (_ownsBroker)
+        {
+            _broker.Dispose();
+        }
         try { File.Delete(_definition.HttpMarkerPath); } catch { /* ignore */ }
         try { File.Delete(_definition.WsMarkerPath); } catch { /* ignore */ }
     }

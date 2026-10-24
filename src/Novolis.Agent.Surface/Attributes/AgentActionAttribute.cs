@@ -17,5 +17,15 @@ public sealed class AgentActionAttribute : Attribute
     /// <summary>Compact param hint, e.g. <c>lightKind|omni,spot; intensity?</c>.</summary>
     public string Params { get; set; } = "";
 
+    public string EffectPreview { get; set; } = "";
+
+    public string Capability { get; set; } = "";
+
+    public string SafetyClass { get; set; } = "";
+
+    public bool ApprovalRequired { get; set; }
+
+    public string Idempotency { get; set; } = "";
+
     public bool EnabledByDefault { get; set; } = true;
 }

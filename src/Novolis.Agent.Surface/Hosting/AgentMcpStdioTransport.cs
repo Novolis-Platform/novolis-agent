@@ -13,16 +13,28 @@ public sealed class AgentMcpStdioTransport : IAsyncDisposable, IAgentTransport
     private readonly IAgentHost _host;
     private readonly AgentSurfaceDefinition _definition;
     private readonly AgentSurfaceDocument _document;
+    private readonly AgentEventBroker _broker;
+    private readonly bool _ownsBroker;
+    private readonly AgentQueueSink _sink;
+    private readonly SemaphoreSlim _write = new(1, 1);
     private readonly TextReader _input;
     private readonly TextWriter _output;
     private CancellationTokenSource? _cts;
     private Task? _loop;
 
-    public AgentMcpStdioTransport(IAgentHost host, AgentSurfaceDefinition definition, TextReader? input = null, TextWriter? output = null)
+    public AgentMcpStdioTransport(
+        IAgentHost host,
+        AgentSurfaceDefinition definition,
+        TextReader? input = null,
+        TextWriter? output = null,
+        AgentEventBroker? broker = null)
     {
         _host = host ?? throw new ArgumentNullException(nameof(host));
         _definition = definition ?? throw new ArgumentNullException(nameof(definition));
         _document = AgentSurfaceDocument.From(definition);
+        _ownsBroker = broker is null;
+        _broker = broker ?? new AgentEventBroker(host);
+        _sink = new AgentQueueSink("mcp", onEnqueued: evt => _ = WriteNotificationAsync(evt));
         _input = input ?? Console.In;
         _output = output ?? Console.Out;
     }
@@ -57,6 +69,10 @@ public sealed class AgentMcpStdioTransport : IAsyncDisposable, IAgentTransport
         }
 
         try { File.Delete(_definition.McpMarkerPath); } catch { /* ignore */ }
+        if (_ownsBroker)
+        {
+            _broker.Dispose();
+        }
     }
 
     public async ValueTask DisposeAsync() => await StopAsync().ConfigureAwait(false);
@@ -91,7 +107,7 @@ public sealed class AgentMcpStdioTransport : IAsyncDisposable, IAgentTransport
             {
                 "initialize" => BuildInitializeResult(),
                 "tools/list" => BuildToolsListResult(),
-                "tools/call" => HandleToolCall(paramsEl),
+                "tools/call" => await HandleToolCallAsync(paramsEl, cancellationToken).ConfigureAwait(false),
                 "ping" => new { },
                 _ => throw new InvalidOperationException($"Unknown MCP method '{method}'."),
             };
@@ -113,7 +129,7 @@ public sealed class AgentMcpStdioTransport : IAsyncDisposable, IAgentTransport
     {
         protocolVersion = "2024-11-05",
         serverInfo = new { name = _definition.SurfaceId, version = _definition.ProtocolVersion },
-        capabilities = new { tools = new { } },
+        capabilities = new { tools = new { }, experimental = new { novolisAgentEvents = true } },
     };
 
     private object BuildToolsListResult() => new
@@ -126,7 +142,7 @@ public sealed class AgentMcpStdioTransport : IAsyncDisposable, IAgentTransport
         }),
     };
 
-    private object HandleToolCall(JsonElement paramsEl)
+    private async Task<object> HandleToolCallAsync(JsonElement paramsEl, CancellationToken cancellationToken)
     {
         var name = paramsEl.ValueKind == JsonValueKind.Object && paramsEl.TryGetProperty("name", out var n)
             ? n.GetString() ?? ""
@@ -135,20 +151,95 @@ public sealed class AgentMcpStdioTransport : IAsyncDisposable, IAgentTransport
             ? a
             : default;
 
-        object payload = name switch
+        object payload;
+        if (name.Equals($"{_definition.SurfaceId}_watch", StringComparison.Ordinal))
         {
-            _ when name.EndsWith("_hello", StringComparison.Ordinal) => _host.Hello(),
-            _ when name.EndsWith("_snapshot", StringComparison.Ordinal) => _host.Snapshot(),
-            _ when name.EndsWith("_actions", StringComparison.Ordinal) => _host.Actions(),
-            _ when name.EndsWith("_command", StringComparison.Ordinal) =>
-                _host.Execute(AgentJsonDispatcher.ParseCommand(arguments)),
-            _ when name.EndsWith("_continue", StringComparison.Ordinal) => _host.Continue(),
-            _ when name.EndsWith("_subscribe", StringComparison.Ordinal) => Subscribe(),
-            _ => throw new InvalidOperationException($"Unknown MCP tool '{name}'."),
-        };
+            payload = _broker.Open(AgentJsonDispatcher.ParseWatch(arguments), _sink);
+        }
+        else if (name.Equals($"{_definition.SurfaceId}_unwatch", StringComparison.Ordinal))
+        {
+            var watchId = arguments.ValueKind == JsonValueKind.Object && arguments.TryGetProperty("watchId", out var id) ? id.GetString() ?? "" : "";
+            payload = _broker.Close(watchId, _sink);
+        }
+        else if (name.Equals($"{_definition.SurfaceId}_watch_next", StringComparison.Ordinal))
+        {
+            var watchId = arguments.ValueKind == JsonValueKind.Object && arguments.TryGetProperty("watchId", out var id) ? id.GetString() ?? "" : "";
+            var max = arguments.ValueKind == JsonValueKind.Object && arguments.TryGetProperty("maxEvents", out var maxEl) && maxEl.TryGetInt32(out var parsed) ? parsed : 16;
+            payload = await _broker.PollAsync(watchId, max, TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+        }
+        else if (name.EndsWith("_hello", StringComparison.Ordinal))
+        {
+            payload = _host.Hello();
+        }
+        else if (name.EndsWith("_snapshot", StringComparison.Ordinal))
+        {
+            payload = _host.Snapshot();
+        }
+        else if (name.EndsWith("_actions", StringComparison.Ordinal))
+        {
+            payload = _host.Actions();
+        }
+        else if (name.EndsWith("_command", StringComparison.Ordinal))
+        {
+            payload = _host.Execute(AgentJsonDispatcher.ParseCommand(arguments));
+        }
+        else if (name.EndsWith("_continue", StringComparison.Ordinal))
+        {
+            payload = _host.Continue();
+        }
+        else if (name.EndsWith("_subscribe", StringComparison.Ordinal))
+        {
+            payload = Subscribe();
+        }
+        else if (FindAction(name) is { } action)
+        {
+            payload = _host.Execute(CommandFor(action, arguments));
+        }
+        else
+        {
+            throw new InvalidOperationException($"Unknown MCP tool '{name}'.");
+        }
 
         var json = JsonSerializer.Serialize(payload, AgentJson.Options);
         return new { content = new object[] { new { type = "text", text = json } } };
+    }
+
+    private AgentAction? FindAction(string toolName)
+    {
+        foreach (var action in _host.Actions().Actions.Concat(_definition.Actions))
+        {
+            if (string.Equals(_document.ToolName(action.Id), toolName, StringComparison.Ordinal))
+            {
+                return action;
+            }
+        }
+
+        return null;
+    }
+
+    private static AgentCommand CommandFor(AgentAction action, JsonElement arguments)
+    {
+        var command = AgentJsonDispatcher.ParseCommand(arguments);
+        command.ActionId = action.Id;
+        if (arguments.ValueKind == JsonValueKind.Object)
+        {
+            command.ArgumentsJson = arguments.GetRawText();
+        }
+
+        return command;
+    }
+
+    private async Task WriteNotificationAsync(AgentWatchEvent evt)
+    {
+        try
+        {
+            await WriteAsync(new { jsonrpc = "2.0", method = "notifications/novolis.agent.event", @params = evt }, CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            // The caller can still poll agent.watch.next.
+        }
     }
 
     private AgentSubscribeResponse Subscribe()
@@ -159,8 +250,16 @@ public sealed class AgentMcpStdioTransport : IAsyncDisposable, IAgentTransport
 
     private async Task WriteAsync(object payload, CancellationToken cancellationToken)
     {
-        var json = JsonSerializer.Serialize(payload, AgentJson.Options);
-        await _output.WriteLineAsync(json.AsMemory(), cancellationToken).ConfigureAwait(false);
-        await _output.FlushAsync(cancellationToken).ConfigureAwait(false);
+        await _write.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var json = JsonSerializer.Serialize(payload, AgentJson.Options);
+            await _output.WriteLineAsync(json.AsMemory(), cancellationToken).ConfigureAwait(false);
+            await _output.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _write.Release();
+        }
     }
 }
