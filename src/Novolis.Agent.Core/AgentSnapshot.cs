@@ -43,6 +43,9 @@ public sealed class AgentSnapshot
     [Key(33)] public AgentReceipt? Receipt { get; set; }
     [Key(34)] public string MetadataVersion { get; set; } = "";
 
+    /// <summary>Threats, objectives, and map features. Empty when the host has none.</summary>
+    [Key(35)] public AgentEntity[] Entities { get; set; } = [];
+
     public string Line(string key) =>
         StatusLines.TryGetValue(key, out var value) ? value : "";
 

@@ -40,6 +40,31 @@ public sealed class AgentCoreExtendedTests
             LastAction = new AgentLastAction { ActionId = "travel", Ok = true, Message = "done" },
         };
         await RoundTrip(snapshot);
+        var withEntity = new AgentSnapshot
+        {
+            Entities =
+            [
+                new AgentEntity
+                {
+                    Id = "threat-1",
+                    Kind = AgentEntity.Threat,
+                    Name = "column",
+                    State = "advancing",
+                    X = 12,
+                    Z = 34,
+                    Summary = "on the road",
+                    Path = [1, 2, 3, 4],
+                },
+            ],
+        };
+        var entityBytes = AgentProtocolCodec.Serialize(withEntity);
+        var entityBack = AgentProtocolCodec.Deserialize<AgentSnapshot>(entityBytes);
+        await Assert.That(entityBack.Entities.Length).IsEqualTo(1);
+        await Assert.That(entityBack.Entities[0].Kind).IsEqualTo(AgentEntity.Threat);
+        await Assert.That(entityBack.Entities[0].Path[3]).IsEqualTo(4);
+        var entityJson = JsonSerializer.Serialize(withEntity, AgentJson.Options);
+        var entityFromJson = JsonSerializer.Deserialize<AgentSnapshot>(entityJson, AgentJson.Options);
+        await Assert.That(entityFromJson!.Entities[0].Id).IsEqualTo("threat-1");
         await RoundTrip(new AgentActionsResponse { Sequence = 2, Actions = [new AgentAction { Id = "ping", Enabled = true }] });
         await RoundTrip(new AgentCommandResult { Ok = true, ActionId = "ping", Snapshot = snapshot });
         await RoundTrip(new AgentDecisionEvent { Day = 5, HubId = "sol", DecisionLine = "choose", Snapshot = snapshot });
