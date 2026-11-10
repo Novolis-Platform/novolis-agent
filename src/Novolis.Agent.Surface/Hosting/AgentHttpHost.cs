@@ -140,110 +140,20 @@ public sealed class AgentHttpHost : IAsyncDisposable, IAgentTransport
         try
         {
             var req = context.Request;
-            var rawPath = (req.Url?.AbsolutePath ?? "/").TrimEnd('/');
-            if (rawPath.Length == 0)
-                rawPath = "/";
+            var rawPath = GetRequestPath(req);
 
-            if (req.HttpMethod == "OPTIONS")
-            {
-                WriteCors(context.Response);
-                context.Response.StatusCode = 204;
-                context.Response.Close();
+            if (await TryHandleOptionsOrHealthAsync(context, req, rawPath, cancellationToken).ConfigureAwait(false))
                 return;
-            }
-
-            if (rawPath is "/health" or "/agent/health" or "/session/health")
-            {
-                await WriteJsonAsync(
-                        context.Response,
-                        200,
-                        new { ok = true, transport = Kind, baseUrl = BaseUrl, surfaceId = _definition.SurfaceId },
-                        cancellationToken)
-                    .ConfigureAwait(false);
-                return;
-            }
 
             var path = NormalizePath(rawPath);
 
-            if (path == "/agent/ws" && req.IsWebSocketRequest)
-            {
-                await HandleWebSocketAsync(context, cancellationToken).ConfigureAwait(false);
+            if (await TryHandleDedicatedTransportsAsync(context, req, path, cancellationToken).ConfigureAwait(false))
                 return;
-            }
 
-            if (path == "/agent/events" && req.HttpMethod == "GET")
-            {
-                await HandleSseAsync(context, cancellationToken).ConfigureAwait(false);
+            if (await TryHandlePostBodyRoutesAsync(context, req, path, cancellationToken).ConfigureAwait(false))
                 return;
-            }
 
-            if (path == "/agent/watch" && req.HttpMethod == "GET")
-            {
-                await HandleWatchSseAsync(context, cancellationToken).ConfigureAwait(false);
-                return;
-            }
-
-            object result;
-            if (path == "/agent/document" && req.HttpMethod == "GET")
-                result = JsonSerializer.Deserialize<object>(_document.ToJson(), AgentJson.Options)!;
-            else if ((path is "/agent/openapi" or "/agent/openapi.json") && req.HttpMethod == "GET")
-                result = JsonSerializer.Deserialize<object>(_document.ToOpenApiJson(), AgentJson.Options)!;
-            else if (path == "/agent/mcp/tools" && req.HttpMethod == "GET")
-                result = _document.ToMcpTools();
-            else if (path == "/agent/rpc/methods" && req.HttpMethod == "GET")
-                result = _document.ToRpcMethods();
-            else if (path == "/agent/announce" && req.HttpMethod == "GET")
-                result = BuildAnnouncement();
-            else if (path == "/agent/hello" && req.HttpMethod == "GET")
-                result = _host.Hello();
-            else if (path == "/agent/snapshot" && req.HttpMethod == "GET")
-                result = _host.Snapshot();
-            else if (path == "/agent/actions" && req.HttpMethod == "GET")
-                result = _host.Actions();
-            else if (path == "/agent/continue" && req.HttpMethod == "POST")
-                result = _host.Continue();
-            else if (path == "/agent/subscribe" && req.HttpMethod == "POST")
-            {
-                _host.Subscribe();
-                result = new AgentSubscribeResponse { Ok = true };
-            }
-            else if (path == "/agent/watch" && req.HttpMethod == "POST")
-            {
-                using var watchDoc = await ReadJsonAsync(req, cancellationToken).ConfigureAwait(false);
-                await WriteJsonAsync(context.Response, 200, new { ok = true, result = _broker.OpenPoll(AgentJsonDispatcher.ParseWatch(watchDoc.RootElement)) }, cancellationToken, cors: false)
-                    .ConfigureAwait(false);
-                return;
-            }
-            else if (path == "/agent/watch/next" && req.HttpMethod == "POST")
-            {
-                using var nextDoc = await ReadJsonAsync(req, cancellationToken).ConfigureAwait(false);
-                var watchId = nextDoc.RootElement.TryGetProperty("watchId", out var watchIdEl) ? watchIdEl.GetString() ?? "" : "";
-                var max = nextDoc.RootElement.TryGetProperty("maxEvents", out var maxEl) && maxEl.TryGetInt32(out var parsed) ? parsed : 16;
-                var polled = await _broker.PollAsync(watchId, max, TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
-                await WriteJsonAsync(context.Response, 200, new { ok = true, result = polled }, cancellationToken, cors: false)
-                    .ConfigureAwait(false);
-                return;
-            }
-            else if (path == "/agent/unwatch" && req.HttpMethod == "POST")
-            {
-                using var closeDoc = await ReadJsonAsync(req, cancellationToken).ConfigureAwait(false);
-                var watchId = closeDoc.RootElement.TryGetProperty("watchId", out var watchIdEl) ? watchIdEl.GetString() ?? "" : "";
-                await WriteJsonAsync(context.Response, 200, new { ok = true, result = _broker.Close(watchId, sink: null) }, cancellationToken, cors: false)
-                    .ConfigureAwait(false);
-                return;
-            }
-            else if (path == "/agent/command" && req.HttpMethod == "POST")
-            {
-                using var doc = await ReadJsonAsync(req, cancellationToken).ConfigureAwait(false);
-                result = _host.Execute(AgentJsonDispatcher.ParseCommand(doc.RootElement));
-            }
-            else if (path == "/agent/rpc" && req.HttpMethod == "POST")
-            {
-                using var doc = await ReadJsonAsync(req, cancellationToken).ConfigureAwait(false);
-                var method = doc.RootElement.TryGetProperty("method", out var m) ? m.GetString() : null;
-                result = AgentJsonDispatcher.Dispatch(_host, method, doc.RootElement);
-            }
-            else
+            if (!TryResolveGetResult(path, req.HttpMethod, out var result))
             {
                 await WriteJsonAsync(context.Response, 404, new { ok = false, error = $"not found {rawPath}" }, cancellationToken)
                     .ConfigureAwait(false);
@@ -254,15 +164,201 @@ public sealed class AgentHttpHost : IAsyncDisposable, IAgentTransport
         }
         catch (Exception ex)
         {
-            try
-            {
-                await WriteJsonAsync(context.Response, 500, new { ok = false, error = ex.Message }, cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            catch
-            {
-                // connection dead
-            }
+            await WriteHandleErrorAsync(context.Response, ex, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static string GetRequestPath(HttpListenerRequest req)
+    {
+        var rawPath = (req.Url?.AbsolutePath ?? "/").TrimEnd('/');
+        return rawPath.Length == 0 ? "/" : rawPath;
+    }
+
+    private async Task<bool> TryHandleOptionsOrHealthAsync(
+        HttpListenerContext context,
+        HttpListenerRequest req,
+        string rawPath,
+        CancellationToken cancellationToken)
+    {
+        if (req.HttpMethod == "OPTIONS")
+        {
+            WriteCors(context.Response);
+            context.Response.StatusCode = 204;
+            context.Response.Close();
+            return true;
+        }
+
+        if (rawPath is not ("/health" or "/agent/health" or "/session/health"))
+            return false;
+
+        await WriteJsonAsync(
+                context.Response,
+                200,
+                new { ok = true, transport = Kind, baseUrl = BaseUrl, surfaceId = _definition.SurfaceId },
+                cancellationToken)
+            .ConfigureAwait(false);
+        return true;
+    }
+
+    private async Task<bool> TryHandleDedicatedTransportsAsync(
+        HttpListenerContext context,
+        HttpListenerRequest req,
+        string path,
+        CancellationToken cancellationToken)
+    {
+        if (path == "/agent/ws" && req.IsWebSocketRequest)
+        {
+            await HandleWebSocketAsync(context, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+
+        if (path == "/agent/events" && req.HttpMethod == "GET")
+        {
+            await HandleSseAsync(context, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+
+        if (path == "/agent/watch" && req.HttpMethod == "GET")
+        {
+            await HandleWatchSseAsync(context, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+
+        return false;
+    }
+
+    private async Task<bool> TryHandlePostBodyRoutesAsync(
+        HttpListenerContext context,
+        HttpListenerRequest req,
+        string path,
+        CancellationToken cancellationToken)
+    {
+        return path switch
+        {
+            "/agent/watch" when req.HttpMethod == "POST" => await HandleWatchPostAsync(context, req, cancellationToken)
+                .ConfigureAwait(false),
+            "/agent/watch/next" when req.HttpMethod == "POST" => await HandleWatchNextPostAsync(context, req, cancellationToken)
+                .ConfigureAwait(false),
+            "/agent/unwatch" when req.HttpMethod == "POST" => await HandleUnwatchPostAsync(context, req, cancellationToken)
+                .ConfigureAwait(false),
+            "/agent/command" when req.HttpMethod == "POST" => await HandleCommandPostAsync(context, req, cancellationToken)
+                .ConfigureAwait(false),
+            "/agent/rpc" when req.HttpMethod == "POST" => await HandleRpcPostAsync(context, req, cancellationToken)
+                .ConfigureAwait(false),
+            _ => false,
+        };
+    }
+
+    private async Task<bool> HandleWatchPostAsync(HttpListenerContext context, HttpListenerRequest req, CancellationToken cancellationToken)
+    {
+        using var watchDoc = await ReadJsonAsync(req, cancellationToken).ConfigureAwait(false);
+        await WriteJsonAsync(
+                context.Response,
+                200,
+                new { ok = true, result = _broker.OpenPoll(AgentJsonDispatcher.ParseWatch(watchDoc.RootElement)) },
+                cancellationToken,
+                cors: false)
+            .ConfigureAwait(false);
+        return true;
+    }
+
+    private async Task<bool> HandleWatchNextPostAsync(HttpListenerContext context, HttpListenerRequest req, CancellationToken cancellationToken)
+    {
+        using var nextDoc = await ReadJsonAsync(req, cancellationToken).ConfigureAwait(false);
+        var watchId = nextDoc.RootElement.TryGetProperty("watchId", out var watchIdEl) ? watchIdEl.GetString() ?? "" : "";
+        var max = nextDoc.RootElement.TryGetProperty("maxEvents", out var maxEl) && maxEl.TryGetInt32(out var parsed) ? parsed : 16;
+        var polled = await _broker.PollAsync(watchId, max, TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+        await WriteJsonAsync(context.Response, 200, new { ok = true, result = polled }, cancellationToken, cors: false)
+            .ConfigureAwait(false);
+        return true;
+    }
+
+    private async Task<bool> HandleUnwatchPostAsync(HttpListenerContext context, HttpListenerRequest req, CancellationToken cancellationToken)
+    {
+        using var closeDoc = await ReadJsonAsync(req, cancellationToken).ConfigureAwait(false);
+        var watchId = closeDoc.RootElement.TryGetProperty("watchId", out var watchIdEl) ? watchIdEl.GetString() ?? "" : "";
+        await WriteJsonAsync(context.Response, 200, new { ok = true, result = _broker.Close(watchId, sink: null) }, cancellationToken, cors: false)
+            .ConfigureAwait(false);
+        return true;
+    }
+
+    private async Task<bool> HandleCommandPostAsync(HttpListenerContext context, HttpListenerRequest req, CancellationToken cancellationToken)
+    {
+        using var doc = await ReadJsonAsync(req, cancellationToken).ConfigureAwait(false);
+        var result = _host.Execute(AgentJsonDispatcher.ParseCommand(doc.RootElement));
+        await WriteJsonAsync(context.Response, 200, new { ok = true, result }, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    private async Task<bool> HandleRpcPostAsync(HttpListenerContext context, HttpListenerRequest req, CancellationToken cancellationToken)
+    {
+        using var doc = await ReadJsonAsync(req, cancellationToken).ConfigureAwait(false);
+        var method = doc.RootElement.TryGetProperty("method", out var m) ? m.GetString() : null;
+        var result = AgentJsonDispatcher.Dispatch(_host, method, doc.RootElement);
+        await WriteJsonAsync(context.Response, 200, new { ok = true, result }, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    private bool TryResolveGetResult(string path, string httpMethod, out object result)
+    {
+        var resolved = ResolveSurfaceDocumentResult(path, httpMethod)
+            ?? ResolveHostStateResult(path, httpMethod)
+            ?? ResolveHostMutationWithoutBodyResult(path, httpMethod);
+        if (resolved is null)
+        {
+            result = default!;
+            return false;
+        }
+
+        result = resolved;
+        return true;
+    }
+
+    private object? ResolveSurfaceDocumentResult(string path, string httpMethod) =>
+        (path, httpMethod) switch
+        {
+            ("/agent/document", "GET") => JsonSerializer.Deserialize<object>(_document.ToJson(), AgentJson.Options)!,
+            ("/agent/openapi", "GET") or ("/agent/openapi.json", "GET") =>
+                JsonSerializer.Deserialize<object>(_document.ToOpenApiJson(), AgentJson.Options)!,
+            ("/agent/mcp/tools", "GET") => _document.ToMcpTools(),
+            ("/agent/rpc/methods", "GET") => _document.ToRpcMethods(),
+            ("/agent/announce", "GET") => BuildAnnouncement(),
+            _ => null,
+        };
+
+    private object? ResolveHostStateResult(string path, string httpMethod) =>
+        (path, httpMethod) switch
+        {
+            ("/agent/hello", "GET") => _host.Hello(),
+            ("/agent/snapshot", "GET") => _host.Snapshot(),
+            ("/agent/actions", "GET") => _host.Actions(),
+            _ => null,
+        };
+
+    private object? ResolveHostMutationWithoutBodyResult(string path, string httpMethod) =>
+        (path, httpMethod) switch
+        {
+            ("/agent/continue", "POST") => _host.Continue(),
+            ("/agent/subscribe", "POST") => SubscribeWithoutBody(),
+            _ => null,
+        };
+
+    private AgentSubscribeResponse SubscribeWithoutBody()
+    {
+        _host.Subscribe();
+        return new AgentSubscribeResponse { Ok = true };
+    }
+
+    private static async Task WriteHandleErrorAsync(HttpListenerResponse response, Exception ex, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await WriteJsonAsync(response, 500, new { ok = false, error = ex.Message }, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            // connection dead
         }
     }
 

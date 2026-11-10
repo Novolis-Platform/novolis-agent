@@ -169,84 +169,112 @@ public sealed class AgentLocalIpcTransport : IAsyncDisposable, IAgentTransport
         }
     }
 
-    private async Task DispatchAsync(ILocalIpcConnection connection, AgentQueueSink sink, LocalIpcFrame frame, CancellationToken cancellationToken)
-    {
-        if (AgentMethodNames.IsHello(frame.Name))
+    private Task DispatchAsync(ILocalIpcConnection connection, AgentQueueSink sink, LocalIpcFrame frame, CancellationToken cancellationToken) =>
+        frame.Name switch
         {
-            var req = AgentProtocolCodec.Deserialize<AgentHelloRequest>(frame.Payload);
-            var res = _host.Hello();
-            res.Sequence = req.Sequence;
-            await ReplyAsync(connection, frame, res, cancellationToken).ConfigureAwait(false);
-        }
-        else if (AgentMethodNames.IsSnapshot(frame.Name))
-        {
-            var req = AgentProtocolCodec.Deserialize<AgentSnapshotRequest>(frame.Payload);
-            var res = _host.Snapshot();
-            res.Sequence = req.Sequence;
-            await ReplyAsync(connection, frame, res, cancellationToken).ConfigureAwait(false);
-        }
-        else if (AgentMethodNames.IsActions(frame.Name))
-        {
-            var req = AgentProtocolCodec.Deserialize<AgentActionsRequest>(frame.Payload);
-            var res = _host.Actions();
-            res.Sequence = req.Sequence;
-            await ReplyAsync(connection, frame, res, cancellationToken).ConfigureAwait(false);
-        }
-        else if (AgentMethodNames.IsCommand(frame.Name))
-        {
-            var req = AgentProtocolCodec.Deserialize<AgentCommandRequest>(frame.Payload);
-            var res = _host.Execute(req.Command);
-            res.Sequence = req.Sequence;
-            await ReplyAsync(connection, frame, res, cancellationToken).ConfigureAwait(false);
-        }
-        else if (AgentMethodNames.IsContinue(frame.Name))
-        {
-            var req = AgentProtocolCodec.Deserialize<AgentContinueRequest>(frame.Payload);
-            var res = _host.Continue();
-            res.Sequence = req.Sequence;
-            await ReplyAsync(connection, frame, res, cancellationToken).ConfigureAwait(false);
-        }
-        else if (AgentMethodNames.IsSubscribe(frame.Name))
-        {
-            var req = AgentProtocolCodec.Deserialize<AgentSubscribeRequest>(frame.Payload);
-            _host.Subscribe();
-            lock (_subscribersGate)
-            {
-                _subscribers.Add(connection);
-            }
+            _ when AgentMethodNames.IsHello(frame.Name) => DispatchHelloAsync(connection, frame, cancellationToken),
+            _ when AgentMethodNames.IsSnapshot(frame.Name) => DispatchSnapshotAsync(connection, frame, cancellationToken),
+            _ when AgentMethodNames.IsActions(frame.Name) => DispatchActionsAsync(connection, frame, cancellationToken),
+            _ when AgentMethodNames.IsCommand(frame.Name) => DispatchCommandAsync(connection, frame, cancellationToken),
+            _ when AgentMethodNames.IsContinue(frame.Name) => DispatchContinueAsync(connection, frame, cancellationToken),
+            _ when AgentMethodNames.IsSubscribe(frame.Name) => DispatchSubscribeAsync(connection, frame, cancellationToken),
+            _ when AgentMethodNames.IsWatch(frame.Name) => DispatchWatchAsync(connection, sink, frame, cancellationToken),
+            _ when AgentMethodNames.IsUnwatch(frame.Name) => DispatchUnwatchAsync(connection, sink, frame, cancellationToken),
+            _ when AgentMethodNames.IsWatchNext(frame.Name) => DispatchWatchNextAsync(connection, sink, frame, cancellationToken),
+            _ => ReplyFaultAsync(connection, frame, $"Unknown method {frame.Name}", cancellationToken).AsTask(),
+        };
 
-            await ReplyAsync(
-                    connection,
-                    frame,
-                    new AgentSubscribeResponse { Sequence = req.Sequence, Ok = true },
-                    cancellationToken)
-                .ConfigureAwait(false);
-        }
-        else if (AgentMethodNames.IsWatch(frame.Name))
+    private async Task DispatchHelloAsync(ILocalIpcConnection connection, LocalIpcFrame frame, CancellationToken cancellationToken)
+    {
+        var req = AgentProtocolCodec.Deserialize<AgentHelloRequest>(frame.Payload);
+        var res = _host.Hello();
+        res.Sequence = req.Sequence;
+        await ReplyAsync(connection, frame, res, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task DispatchSnapshotAsync(ILocalIpcConnection connection, LocalIpcFrame frame, CancellationToken cancellationToken)
+    {
+        var req = AgentProtocolCodec.Deserialize<AgentSnapshotRequest>(frame.Payload);
+        var res = _host.Snapshot();
+        res.Sequence = req.Sequence;
+        await ReplyAsync(connection, frame, res, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task DispatchActionsAsync(ILocalIpcConnection connection, LocalIpcFrame frame, CancellationToken cancellationToken)
+    {
+        var req = AgentProtocolCodec.Deserialize<AgentActionsRequest>(frame.Payload);
+        var res = _host.Actions();
+        res.Sequence = req.Sequence;
+        await ReplyAsync(connection, frame, res, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task DispatchCommandAsync(ILocalIpcConnection connection, LocalIpcFrame frame, CancellationToken cancellationToken)
+    {
+        var req = AgentProtocolCodec.Deserialize<AgentCommandRequest>(frame.Payload);
+        var res = _host.Execute(req.Command);
+        res.Sequence = req.Sequence;
+        await ReplyAsync(connection, frame, res, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task DispatchContinueAsync(ILocalIpcConnection connection, LocalIpcFrame frame, CancellationToken cancellationToken)
+    {
+        var req = AgentProtocolCodec.Deserialize<AgentContinueRequest>(frame.Payload);
+        var res = _host.Continue();
+        res.Sequence = req.Sequence;
+        await ReplyAsync(connection, frame, res, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task DispatchSubscribeAsync(ILocalIpcConnection connection, LocalIpcFrame frame, CancellationToken cancellationToken)
+    {
+        var req = AgentProtocolCodec.Deserialize<AgentSubscribeRequest>(frame.Payload);
+        _host.Subscribe();
+        lock (_subscribersGate)
         {
-            var req = AgentProtocolCodec.Deserialize<AgentWatchRequest>(frame.Payload);
-            var res = _broker.Open(req, sink);
-            res.Sequence = req.Sequence;
-            await ReplyAsync(connection, frame, res, cancellationToken).ConfigureAwait(false);
+            _subscribers.Add(connection);
         }
-        else if (AgentMethodNames.IsUnwatch(frame.Name))
-        {
-            var req = AgentProtocolCodec.Deserialize<AgentUnwatchRequest>(frame.Payload);
-            var res = _broker.Close(req.WatchId, sink);
-            res.Sequence = req.Sequence;
-            await ReplyAsync(connection, frame, res, cancellationToken).ConfigureAwait(false);
-        }
-        else if (AgentMethodNames.IsWatchNext(frame.Name))
-        {
-            var req = AgentProtocolCodec.Deserialize<AgentWatchNextRequest>(frame.Payload);
-            var res = await _broker.PollAsync(req.WatchId, req.MaxEvents, TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
-            res.Sequence = req.Sequence;
-            await ReplyAsync(connection, frame, res, cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            await ReplyFaultAsync(connection, frame, $"Unknown method {frame.Name}", cancellationToken).ConfigureAwait(false);
-        }
+
+        await ReplyAsync(
+                connection,
+                frame,
+                new AgentSubscribeResponse { Sequence = req.Sequence, Ok = true },
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private async Task DispatchWatchAsync(
+        ILocalIpcConnection connection,
+        AgentQueueSink sink,
+        LocalIpcFrame frame,
+        CancellationToken cancellationToken)
+    {
+        var req = AgentProtocolCodec.Deserialize<AgentWatchRequest>(frame.Payload);
+        var res = _broker.Open(req, sink);
+        res.Sequence = req.Sequence;
+        await ReplyAsync(connection, frame, res, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task DispatchUnwatchAsync(
+        ILocalIpcConnection connection,
+        AgentQueueSink sink,
+        LocalIpcFrame frame,
+        CancellationToken cancellationToken)
+    {
+        var req = AgentProtocolCodec.Deserialize<AgentUnwatchRequest>(frame.Payload);
+        var res = _broker.Close(req.WatchId, sink);
+        res.Sequence = req.Sequence;
+        await ReplyAsync(connection, frame, res, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task DispatchWatchNextAsync(
+        ILocalIpcConnection connection,
+        AgentQueueSink sink,
+        LocalIpcFrame frame,
+        CancellationToken cancellationToken)
+    {
+        var req = AgentProtocolCodec.Deserialize<AgentWatchNextRequest>(frame.Payload);
+        var res = await _broker.PollAsync(req.WatchId, req.MaxEvents, TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+        res.Sequence = req.Sequence;
+        await ReplyAsync(connection, frame, res, cancellationToken).ConfigureAwait(false);
     }
 
     private static ValueTask ReplyAsync<T>(
